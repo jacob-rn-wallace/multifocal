@@ -38,6 +38,22 @@ hardcoded address) should in principle work the same way against a real
 82180A module, but this has never actually been tried against a
 CV-shaped ROM boot.
 
+**Scope decision (2026-09-04, discussion only - no code changed):** a
+CV (the user's actual unit, unmodified) is the near-term target;
+"upgrading" it via a CX-class module or an HP-41CL-family board (e.g.
+SY41CL, whose manual is already on hand per the note above) to gain
+real XM is an explicit stretch goal, not something to design around
+now. Considered and set aside in the same discussion, as premature
+scope expansion: also supporting a bare 41C brought up to CV-equivalent
+register count via a memory module. **Real tension this leaves open,
+not yet resolved**: Phase 1's XM-based storage design has no XM to run
+on if near-term testing is against an unmodified CV with no CL/82180A
+installed - unclear yet whether that means real-hardware testing waits
+until XM is available (via CL or CX), or whether the register-range
+alternative Phase 1 rejected (see that section below) needs revisiting
+for CV-without-XM compatibility. Not a decision to force now - flagging
+it here so it isn't lost before Phase 3 planning.
+
 **Compatibility:** native FOCAL programs must behave identically whether or
 not MultiFOCAL is present. Additive functions only — no opcode/syntax changes.
 
