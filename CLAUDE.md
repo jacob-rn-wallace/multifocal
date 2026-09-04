@@ -13,6 +13,31 @@ user if it needs to be recovered).
 **Hard constraint:** stay on original HP-41 hardware as long as possible.
 Flag explicitly before any design choice that requires leaving it.
 
+**Real-hardware testing target: HP-41CV** (the user's own unit; noted
+2026-09-04, not yet acted on - Phase 3 work hasn't started). This makes
+concrete a question Phase 1 had left open ("HP-41CV's XM compatibility
+is genuinely unclear... needs direct verification" - see Phase 1's own
+section below): a CV has no built-in Extended Memory, so real XM
+support would come from a plug-in module (the period-correct HP 82180A
+Extended Functions/Extended Memory module, per Phase 1's own research),
+not the fixed mainframe-ROM addresses a CX provides. All Phase 0-2 work
+so far has been tested exclusively against soynut's CX boot config
+(`nut_boot_cx()`, `XNUT0-2.ROM` + `CXFUNS0-1.ROM`) - genuinely untested
+against a CV+82180A configuration. One relevant data point already on
+hand, not yet verified as sufficient: as of the `phase-2` tag,
+`src/frames.s`'s actual LCLS/LCLX code doesn't call any CX-specific
+fixed mainframe address at all (RESZFL/CRFLD calls were removed from
+the hot path this phase - see Phase 2's own sections below) - only
+`ERR110` (base `mainframe.h`, universal) and its own self-contained
+`gsbp` helpers. Its `#include "mainframe_cx.h"` is consequently unused
+dead weight right now, left in from an earlier iteration - a candidate
+for cleanup, not yet acted on. This is a reason for optimism, not a
+verified conclusion: the one-time `CRFLD` setup itself (done via real
+keystrokes in the test harness, i.e. name-based catalog dispatch, not a
+hardcoded address) should in principle work the same way against a real
+82180A module, but this has never actually been tried against a
+CV-shaped ROM boot.
+
 **Compatibility:** native FOCAL programs must behave identically whether or
 not MultiFOCAL is present. Additive functions only — no opcode/syntax changes.
 
@@ -191,7 +216,11 @@ sign-off after seeing the numbers:
   from what was researched** (contradictory claims found - CV's built-in
   319 registers may or may not conflict with XM's address space) and
   needs direct verification before stating a firm answer; don't assume
-  either way yet.
+  either way yet. **This is no longer a hypothetical** - see the
+  "Real-hardware testing target: HP-41CV" note near the top of this
+  file (2026-09-04): the CV is specifically the user's own unit and the
+  actual real-hardware target, so this verification is now a concrete,
+  load-bearing Phase 3+ task, not just due diligence.
 - This is a hardware-*scope* narrowing (which real HP-41 configurations
   are supported), not a violation of the "stay on original hardware"
   constraint itself (XM is 100% original, real HP hardware) - worth being
