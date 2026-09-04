@@ -3,13 +3,20 @@
  * @brief Phase 2 milestone: nested LCLS/LCLX frame lifecycle test.
  *
  * LCLS/LCLX are pure functions over the FOCAL X register (see
- * src/frames.s's header comment for the full design rationale and the
- * decisive finding that led to it): the caller supplies the current
- * MFSTK stack size in X, and each call returns the new size in X after
- * growing/shrinking by 4 registers via RESZFL. No seeking, no header
- * register, no ALPHA touch inside LCLS/LCLX at all.
+ * src/frames.s's header comment for the full design rationale). The
+ * caller supplies the current logical stack size in X; each call
+ * returns the new size in X after adding/removing 4. LCLS/LCLX never
+ * call RESZFL themselves (a bare "gosub RESZFL; golong ERR110" was
+ * confirmed to hang the OS's own ERR110 code on a second such call in
+ * a session - see CLAUDE.md's "second-call hang precisely isolated"
+ * section) - MFSTK is instead created once, at its full maximum size
+ * (recursion-depth-ceiling 8 x frame-width 4 + header 2 = 34
+ * registers), via the same one-time real keystroke/XEQ CRFLD this
+ * test already used for file creation. No seeking, no header
+ * register, no ALPHA touch, and no further XM interaction at all
+ * inside LCLS/LCLX.
  *
- * This test creates MFSTK once (via real keystrokes, size 2), then
+ * This test creates MFSTK once (via real keystrokes, size 34), then
  * exercises 3 nested pushes and 3 pops, checking the returned size
  * after each XEQ matches what a real nested call chain should produce:
  * 2 -> 6 -> 10 -> 14 -> 10 -> 6 -> 2.
@@ -51,13 +58,15 @@ int main(void) {
     printf("cold boot disp=%s\n", display_to_buf(dispbuf));
     if (ret == 1) asleep_state = true;
 
-    /* One-time setup via keystrokes: create MFSTK at size 2 (LCLS/LCLX
-     * never call CRFLD themselves - see frames.s's header comment on
-     * why ALPHA-touching functions can't be gosub'd from MCODE). */
+    /* One-time setup via keystrokes: create MFSTK at its full maximum
+     * size (8x4+2=34) - LCLS/LCLX never call CRFLD or RESZFL themselves
+     * (see frames.s's header comment for why: ALPHA-touching functions
+     * can't be gosub'd from MCODE at all, and RESZFL specifically hangs
+     * the OS's own ERR110 code on a second such gosub'd call). */
     type_byte(0x01); type_str("MFSTK"); type_byte(0x01);
-    type_str("2");
+    type_str("34");
     xeq("CRFLD");
-    printf("setup CRFLD(MFSTK,2): disp=\"%s\"\n", display_to_buf(dispbuf));
+    printf("setup CRFLD(MFSTK,34): disp=\"%s\"\n", display_to_buf(dispbuf));
 
     int fails = 0;
     int expect;

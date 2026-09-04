@@ -732,3 +732,61 @@ strategy change.
 RESZFL redesign; if it avoids the hang, that's strong confirmation of
 the theory above without needing to fully disassemble `ERR110`'s
 file-name display sub-path to find the exact missing setup step.
+
+## Phase 2 milestone reached: full nested LCLS/LCLX push/pop sequence
+passes, plus a second, unrelated real bug found and fixed (2026-09-04)
+
+Implemented the fixed-max-size redesign proposed above: `LCLS`/`LCLX`
+no longer call `RESZFL` at all - they're pure counter arithmetic over
+X (read/converted/incremented-or-decremented/converted-back/written,
+exactly as before, just with the `gosub RESZFL` line deleted).
+`test/frames_test.c`'s one-time setup now creates `MFSTK` at its full
+maximum size (34 = depth-ceiling 8 x frame-width 4 + header 2) instead
+of size 2. This alone made all 3 `LCLS` calls in the milestone test
+pass, confirming the RESZFL/`ERR110` hang theory from the previous
+section - avoiding `RESZFL` from MCODE entirely does avoid it.
+
+**A second, completely unrelated real bug surfaced immediately after**:
+`LCLX` (the decrement direction) never dispatched at all - not a wrong
+answer, a real *no-op*: `XEQ LCLX` left X completely unchanged, with
+no error message, from a fresh boot or after setup, regardless of X's
+value. Traced all the way down (a dedicated PC-watch confirmed `regPC`
+never once touches page 8 - LCLX's own page - during the entire
+key-processing budget, even though `modtool --summary` shows its FAT
+entry as syntactically correct and correctly addressed).
+
+**Root cause, confirmed by direct experiment**: **the *last* `.fat`
+entry in a module never dispatches via `XEQ ALPHA <name> ALPHA`**, full
+stop - independent of which real function happens to occupy that slot.
+Proved by adding a trivial third dummy FAT entry (`golong ERR110`)
+after `LCLX` in the `.fat` list: `LCLX` immediately started dispatching
+correctly (confirmed via `modtool --summary` showing the new entry's
+address, and by direct trace showing execution now genuinely reaching
+page 8). This is a real, previously-undiscovered Calypsi/FAT-structure
+finding, not an MCODE logic bug - `LCLS` happened to never hit it only
+because it wasn't the last entry in this module's own `.fat` list.
+
+**Fix, now in `src/frames.s` and permanent**: added a fourth, deliberate
+no-op FAT entry (`.name "MFPAD"`, `Padding: rtn`) as the last `.fat`
+entry, so no real callable function is ever last. Documented at both
+the FAT table and the `Padding` label itself as a permanent placeholder,
+not dead code to remove later - any future new function added to this
+module must go *before* `Padding` in the `.fat` list, or `Padding`
+must be moved back to last position again.
+
+**Result: `test/frames_test.c`'s full milestone (3 nested pushes then
+3 pops, checking every returned size) now passes end to end** - 2 -> 6
+-> 10 -> 14 -> 10 -> 6 -> 2, all six steps correct, confirmed stable
+across repeated runs. This closes out the number-format conversion
+work and the RESZFL/`ERR110` hang investigation from the sections
+above, and is the first time this project's actual frame push/pop
+mechanism has been shown working end to end.
+
+**Scope reminder, unchanged from the original design**: this milestone
+validates the *fixed-width-4* proof-of-concept scope cut - the
+underlying variable-width, self-describing-trailer design from Phase 1
+is still deferred, and `MFSTK` is now allocated once at a size
+(recursion-depth-ceiling x frame-width + header) that assumes the
+fixed-width-4 cut too. Phase 3 (`LSTO`/`LRCL`, real seeking/register
+access within the pre-allocated file) and generalizing frame width are
+still open.

@@ -18,15 +18,33 @@
 ;;; message-display side effect that only appears if control actually
 ;;; returns - see test/probe*_test.c (not checked in - throwaway,
 ;;; reproducible from this file's description). This means MCODE can
-;;; safely call GETX/SAVEX/RESZFL directly, but CANNOT safely call
-;;; SEEKPTA/RCLPTA/CRFLD this way at all - only via a real keystroke/XEQ
+;;; safely call GETX/SAVEX directly, but CANNOT safely call SEEKPTA/
+;;; RCLPTA/CRFLD this way at all - only via a real keystroke/XEQ
 ;;; dispatch, which is why file creation happens once via the test
 ;;; harness's own keystrokes, never from inside LCLS/LCLX.
 ;;;
-;;; This works because "current file" is persistent OS state that
-;;; survives across separate XEQ invocations, not just within one call -
-;;; as long as nothing ever re-selects a different file (which would
-;;; need SEEKPTA/CRFLD), MFSTK stays "current" for RESZFL to act on.
+;;; **A second, later finding retracts "safely call RESZFL directly"
+;;; for repeated use, even though a single such call does return
+;;; normally**: a bare `gosub RESZFL; golong ERR110` (no other logic at
+;;; all) was confirmed, via a minimal isolated reproduction, to hang
+;;; the *second* time it happens in a session (regardless of which FAT
+;;; function issues it) - the infinite loop is inside `ERR110`'s own
+;;; code (a bare `rtn` instead avoids it), not RESZFL's, which always
+;;; completes and returns correctly. See CLAUDE.md's "second-call hang
+;;; precisely isolated" section for the full evidence. **Consequence:
+;;; LCLS/LCLX never call RESZFL at all.** MFSTK is instead allocated
+;;; ONCE, at its full maximum size (recursion-depth-ceiling x frame-
+;;; width + header - see the test harness's setup keystrokes), via the
+;;; same one-time real keystroke/XEQ `CRFLD` file creation already used
+;;; - and LCLS/LCLX are pure counter arithmetic over X from that point
+;;; on, never touching the XM file itself.
+;;;
+;;; "Current file" being persistent OS state that survives across
+;;; separate XEQ invocations (not just within one call) is still true
+;;; and still why file creation only needs to happen once - it's just
+;;; no longer relevant to LCLS/LCLX's own bodies, only to whatever
+;;; later Phase 3 code (LSTO/LRCL) actually reads/writes registers in
+;;; that pre-allocated file.
 ;;;
 ;;; Register format: a 14-nibble register is nibble13=sign, nibbles3-12
 ;;; ="M" field = the 10 mantissa digits (ones digit at nibble 12),
@@ -74,12 +92,22 @@
 ;;; nibble12=value with exponent nibbles all 0; "10"/"14"/"30" all
 ;;; show nibble12=tens digit, nibble11=ones digit, nibble0=1.
 
+;;; REAL, CONFIRMED CALYPSI/FAT FINDING: the LAST .fat entry in a module
+;;; never dispatches via XEQ ALPHA <name> ALPHA - it never even enters
+;;; its own page (confirmed via modtool --summary showing its address
+;;; correctly, plus a step-by-step trace showing regPC never touches
+;;; that page at all). Confirmed by adding a trailing dummy FAT entry
+;;; after it, which made the PREVIOUSLY-LAST entry start working. Fix:
+;;; never let a real function be the last .fat entry - Padding below is
+;;; a permanent, deliberate no-op placeholder for exactly this reason,
+;;; not dead code to clean up.
               .section CODE
               .con    31
               .con    .fatsize FatEnd
               .fat    Header
               .fat    Lcls
               .fat    Lclx
+              .fat    Padding
 FatEnd:       .con    0,0
 
 #include "mainframe.h"
@@ -137,25 +165,28 @@ Store:        a=c     w          ; stash the complete float value while DADD is 
               rtn
 
               .name   "LCLS"
-;;; X in: current stack size. X out: new size (current + 4). Grows the
-;;; already-current MFSTK file by 4 registers via RESZFL - no seeking,
-;;; no header, no ALPHA touch (see file header for why).
+;;; X in: current logical stack size. X out: new size (current + 4).
+;;; Pure counter arithmetic - does NOT call RESZFL. MFSTK is allocated
+;;; once, at its full maximum size, by the test harness's one-time
+;;; keystroke setup (see the file header's "REDESIGN" note above); LCLS/
+;;; LCLX only ever track how many of those pre-allocated registers are
+;;; logically in use.
 Lcls:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               setdec                ; C=C+1/-1 M do raw hex nibble arithmetic unless decimal mode is on (confirmed empirically - 9+1 gave 0xA, not a BCD-corrected 0-with-carry, until this was added)
               c=c+1   m
               c=c+1   m
               c=c+1   m
               c=c+1   m             ; C.M = current+4
-              sethex                ; restore hex mode before any further gosub/gsbp - gsbp's own mainframe relocation helper does its own address arithmetic in hex, and leaving decimal mode on corrupted its jump target (confirmed empirically: the very next gsbp landed on the wrong page)
+              sethex                ; restore hex mode before any further gsbp - gsbp's own mainframe relocation helper does its own address arithmetic in hex, and leaving decimal mode on corrupted its jump target (confirmed empirically: the very next gsbp landed on the wrong page)
               a=c     m
               b=a     m             ; B.M = new size
               gsbp    StoreFloatIntoX ; X = new size, normalized float form
-              gosub   RESZFL        ; grow the file to that size
               golong  ERR110        ; clean top-level completion - refreshes the display with X, goes idle (a bare "rtn" here left the display blank, confirmed empirically - see CLAUDE.md)
 
               .name   "LCLX"
-;;; X in: current stack size. X out: new size (current - 4). Shrinks
-;;; the already-current MFSTK file by 4 registers via RESZFL.
+;;; X in: current logical stack size. X out: new size (current - 4).
+;;; Pure counter arithmetic - does NOT call RESZFL, same reasoning as
+;;; LCLS above.
 Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               setdec                ; see LCLS's own comment on this - same reasoning
               c=c-1   m
@@ -166,8 +197,14 @@ Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               a=c     m
               b=a     m             ; B.M = new size
               gsbp    StoreFloatIntoX ; X = new size, normalized float form
-              gosub   RESZFL        ; shrink the file to that size
               golong  ERR110        ; clean top-level completion, same reasoning as LCLS above
+
+;;; Deliberate, permanent no-op placeholder - see the FAT table comment
+;;; above. Never remove without also removing the reason it's here:
+;;; the true LAST .fat entry never dispatches, so this must always be
+;;; whatever comes last, not any real callable function.
+              .name   "MFPAD"
+Padding:      rtn
 
               .section PollVectors
               .con    0
