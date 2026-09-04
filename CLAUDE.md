@@ -790,3 +790,56 @@ is still deferred, and `MFSTK` is now allocated once at a size
 fixed-width-4 cut too. Phase 3 (`LSTO`/`LRCL`, real seeking/register
 access within the pre-allocated file) and generalizing frame width are
 still open.
+
+## Phase 2 closed out: recursion-depth-ceiling enforcement added
+(2026-09-04)
+
+Before tagging Phase 2 complete, closed a real gap against Phase 1's
+own decision ("recursion depth ceiling: default 8"): nothing previously
+stopped `LCLS` from being called past the pre-allocated 34-register
+maximum, or `LCLX` from being called past empty (2). Neither is a
+crash risk (no `RESZFL` call means no XM operation to fail), but both
+were silent correctness gaps - `LCLS` would have kept incrementing X
+past 34 forever with no error, `LCLX` past 2 into negative territory
+(which this project's own number-format conversion doesn't even
+support - see the RCR-rotation derivation above, which only handles
+0-34).
+
+**Design choice for the refusal itself**: deliberately silent (X left
+unchanged, no error message) rather than raising a real HP-41 named
+error. A named error needs to *display text*, and every text-display
+mechanism confirmed safe so far in this project goes through routines
+this specific new code path hadn't independently verified (`MESSL`
+etc., per `HelloWorld.s`) - given how many subtle, hard-to-diagnose
+bugs this phase already surfaced in far simpler code, the lower-risk
+choice was to reuse only what's already proven (the same `golong
+ERR110` completion every other path uses) and skip the message
+entirely. A caller can tell a push/pop was refused because X comes
+back unchanged instead of shifted by 4 - documented in `frames.s`
+itself.
+
+**Implementation**: both `LCLS` and `LCLX` now do a bounds check via
+`?A<C M` (confirmed via `nutcpu.c` to be a non-destructive, full
+10-nibble comparison, correctly BCD-aware once `SETDEC` is set - the
+same instruction family, `subreg`, that the arithmetic itself already
+depends on) against a constructed constant (34 for `LCLS`, 6 for
+`LCLX` - the smallest value it may still safely act on) *before* doing
+any arithmetic, branching around the increment/decrement and the
+`StoreFloatIntoX` conversion entirely when refused.
+
+**Verified via a new, dedicated test** (`test/frames_bounds_test.c`,
+checked in - not throwaway): `LCLS` at exactly 34 is refused (X stays
+34); `LCLX` at exactly 2 is refused (X stays 2); `LCLS` at 30 and
+`LCLX` at 6 - one step away from each boundary - both still succeed
+normally. All four cases pass, and the original 6-step milestone test
+(`test/frames_test.c`) still passes unchanged after this addition.
+
+**Phase 2 is now tagged complete** (`phase-2`). What's *not* covered by
+that tag, staying explicitly open for later phases: the compatibility
+constraint (native FOCAL programs unaffected by MultiFOCAL's presence)
+has not been tested at all this phase; the variable-width design from
+Phase 1's own tag is superseded by this phase's fixed-max-allocation
+approach, which Phase 3+ may need to revisit if variable frame widths
+are ever required; and `LSTO`/`LRCL` (actual local-variable read/write
+within a pushed frame) don't exist yet - by original design, that's
+Phase 3's job, not a Phase 2 gap.

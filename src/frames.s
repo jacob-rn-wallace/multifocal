@@ -165,14 +165,27 @@ Store:        a=c     w          ; stash the complete float value while DADD is 
               rtn
 
               .name   "LCLS"
-;;; X in: current logical stack size. X out: new size (current + 4).
-;;; Pure counter arithmetic - does NOT call RESZFL. MFSTK is allocated
-;;; once, at its full maximum size, by the test harness's one-time
-;;; keystroke setup (see the file header's "REDESIGN" note above); LCLS/
-;;; LCLX only ever track how many of those pre-allocated registers are
-;;; logically in use.
+;;; X in: current logical stack size. X out: new size (current + 4), or
+;;; X UNCHANGED if already at the depth ceiling (34 = 8 frames x 4 +
+;;; header 2 - see Phase 1's recursion-depth-ceiling decision). Pure
+;;; counter arithmetic - does NOT call RESZFL. MFSTK is allocated once,
+;;; at its full maximum size, by the test harness's one-time keystroke
+;;; setup (see the file header's "REDESIGN" note above); LCLS/LCLX only
+;;; ever track how many of those pre-allocated registers are logically
+;;; in use. A refused push/pop is intentionally silent (no ALPHA-based
+;;; error message - see the file header on why touching ALPHA from
+;;; MCODE is unsafe) - a caller can tell it was refused because X comes
+;;; back unchanged instead of shifted by 4.
 Lcls:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
-              setdec                ; C=C+1/-1 M do raw hex nibble arithmetic unless decimal mode is on (confirmed empirically - 9+1 gave 0xA, not a BCD-corrected 0-with-carry, until this was added)
+              setdec                ; needed for both C=C+1 M below and the ?A<C M bounds check (both are BCD-sensitive via nutcpu.c's shared flagdec gate)
+              a=c     m             ; A.M = current size, stashed for the bounds check
+              c=0     w
+              pt=     4
+              lc      3
+              lc      4             ; C.M = 34 (plain form: nibble4=3, nibble3=4 - the depth ceiling)
+              ?a<c    m             ; carry=1 iff current < 34 (room left to grow)
+              gonc    LclsFull      ; carry clear means current >= 34 already - refuse the push
+              c=a     m             ; C.M = current size again, for the real arithmetic
               c=c+1   m
               c=c+1   m
               c=c+1   m
@@ -182,13 +195,25 @@ Lcls:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               b=a     m             ; B.M = new size
               gsbp    StoreFloatIntoX ; X = new size, normalized float form
               golong  ERR110        ; clean top-level completion - refreshes the display with X, goes idle (a bare "rtn" here left the display blank, confirmed empirically - see CLAUDE.md)
+LclsFull:     sethex                ; same reasoning as above - restore hex mode before golong regardless of path taken
+              golong  ERR110        ; X is left unchanged - the push was refused (already at the depth ceiling)
 
               .name   "LCLX"
-;;; X in: current logical stack size. X out: new size (current - 4).
-;;; Pure counter arithmetic - does NOT call RESZFL, same reasoning as
-;;; LCLS above.
+;;; X in: current logical stack size. X out: new size (current - 4), or
+;;; X UNCHANGED if already at the minimum (2 = header only, no frames
+;;; left to pop). Pure counter arithmetic - does NOT call RESZFL, same
+;;; reasoning as LCLS above. Same "refusal is silent, X unchanged"
+;;; convention as LCLS.
 Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               setdec                ; see LCLS's own comment on this - same reasoning
+              a=c     m             ; A.M = current size, stashed for the bounds check
+              c=0     w
+              pt=     4
+              lc      0
+              lc      6             ; C.M = 6 (plain form: nibble4=0, nibble3=6) - the smallest size LCLX may act on (result would be 2, the empty-stack minimum)
+              ?a<c    m             ; carry=1 iff current < 6 (already empty - nothing left to pop)
+              goc     LclxEmpty     ; carry set means current < 6 already - refuse the pop
+              c=a     m             ; C.M = current size again, for the real arithmetic
               c=c-1   m
               c=c-1   m
               c=c-1   m
@@ -198,6 +223,8 @@ Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               b=a     m             ; B.M = new size
               gsbp    StoreFloatIntoX ; X = new size, normalized float form
               golong  ERR110        ; clean top-level completion, same reasoning as LCLS above
+LclxEmpty:    sethex                ; same reasoning as LclsFull above
+              golong  ERR110        ; X is left unchanged - the pop was refused (already empty)
 
 ;;; Deliberate, permanent no-op placeholder - see the FAT table comment
 ;;; above. Never remove without also removing the reason it's here:
