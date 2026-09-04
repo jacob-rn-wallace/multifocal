@@ -45,14 +45,30 @@ SY41CL, whose manual is already on hand per the note above) to gain
 real XM is an explicit stretch goal, not something to design around
 now. Considered and set aside in the same discussion, as premature
 scope expansion: also supporting a bare 41C brought up to CV-equivalent
-register count via a memory module. **Real tension this leaves open,
-not yet resolved**: Phase 1's XM-based storage design has no XM to run
-on if near-term testing is against an unmodified CV with no CL/82180A
-installed - unclear yet whether that means real-hardware testing waits
-until XM is available (via CL or CX), or whether the register-range
-alternative Phase 1 rejected (see that section below) needs revisiting
-for CV-without-XM compatibility. Not a decision to force now - flagging
-it here so it isn't lost before Phase 3 planning.
+register count via a memory module.
+
+**The XM-hinges-everything tension above is resolved, not left open**:
+the user confirmed the storage design should keep depending on XM (the
+register-range alternative Phase 1 rejected is NOT being revisited) -
+and pointed out the real path this project's own Phase 2 groundwork had
+already found without connecting it: on a base 41C/CV, XM's own support
+routines (`GETX`/`SAVEX`/`CRFLD`/`RESZFL`) live inside the 82180A *port
+module*, dispatched by name through the catalog - unlike the CX's other
+extras, XM was architecturally always a port-pluggable capability, not
+baked into internal mainframe ROM. A modern flash-based port-module
+emulator (the user named **TULIP4041**) plausibly emulating that
+82180A behavior would need no internal/CPU-board modification at all -
+and this project's own MCODE is already positioned for it, since the
+one-time `CRFLD` setup dispatches by name, not a hardcoded address
+(see the `phase-2`-tag note above). Expected real deployment shape,
+per the user: MultiFOCAL's own module and an emulated 82180A would
+likely sit side by side as separate flash-hosted ROM images on the
+same device - consistent with this file's own "Packaging: standalone
+MCODE ROM/module" decision. **Confidence caveat**: this is inference,
+not a verified fact - nobody has confirmed TULIP4041 specifically
+emulates 82180A/XM behavior at the ROM/port level, only that XM's
+architecture makes this plausible in principle. Verify directly before
+relying on it once real-hardware testing actually starts.
 
 **Compatibility:** native FOCAL programs must behave identically whether or
 not MultiFOCAL is present. Additive functions only — no opcode/syntax changes.
