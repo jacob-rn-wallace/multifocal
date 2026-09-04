@@ -3,3 +3,4 @@
 *.mod
 build/
 toolchain/calypsi-nut-*/
+tools/cxfuns_rom.c

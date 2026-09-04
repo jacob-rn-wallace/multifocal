@@ -228,5 +228,59 @@ once ConFOCAL exists with its own real numbers. This is now more
 load-bearing than it would have been under a register-range design, since
 XM is the literal shared resource both projects would draw from.
 
-**Not yet started:** Phase 2 (frame stack enter/exit primitives) - next up,
-pending go-ahead.
+## Phase 2 groundwork: XM calling convention verified (2026-09-04)
+
+Before writing any frame-stack MCODE, did the research Phase 1 flagged as
+necessary: how does third-party MCODE actually read/write registers in an
+Extended Memory file? Two-step process, both grounded in primary sources:
+
+**Step 1 - FOCAL-level contract**, from the real HP-41CX Owner's Manual
+Volume 2, Section 13 ("Extended Memory," pp. 209-227):
+- XM is a **stateful cursor, not random access by index**. `SEEKPTA`
+  (ALPHA=filename, X=position) selects a file as "current" and positions
+  its pointer in one call; `GETR`/`GETRX` then read from wherever that
+  pointer sits and auto-advance it; `SAVER`/`SAVERX` write the same way.
+  `RCLPTA` reads the current filename+pointer back out.
+- `CRFLD` (ALPHA=filename, X=register count) creates/opens a file.
+  `RESZFL` (X=new count) resizes the current file in place.
+- **Consequence for frame push/pop**: "current file + pointer" is global
+  OS state, not scoped to MultiFOCAL's own calls. Every frame operation
+  must save the caller's file/pointer context (`RCLPTA`) before touching
+  XM and restore it after, or it will silently corrupt whatever XM file
+  the user's own program (or, later, ConFOCAL) had open.
+
+**Step 2 - Nut-level calling convention**, confirmed by directly
+disassembling the real `CXFUNS0.ROM`/`CXFUNS1.ROM` pages (`tools/`,
+gitignored ROM-derived output, `make -C tools cxfuns cx_disasm` to
+reproduce): `GETRX`/`SAVERX` share one code body gated by a mode flag
+(ST bit 7) and read their numeric parameter via `GTINDX` - the same
+utility an ordinary FOCAL `XEQ` uses to read the visible **X register**.
+`SEEKPT`/`SEEKPTA` and `CRFLD`/`CRFLAS` show the identical pattern (a mode
+flag selecting between paired variants) and read filenames via
+`GTFLNA`/`FLSHAP`-family utilities against the **ALPHA register**. There
+is no special raw-Nut-register calling convention to reverse-engineer:
+**these routines expect the same FOCAL-level stack/ALPHA state a real
+keystroke sequence would have already set up**, and calling them from
+MultiFOCAL's own MCODE means constructing that state first, then
+dispatching in - with all the same visible side effects (stack lift, etc.)
+a real XEQ would have. This upgrades the confidence on this point from the
+initial research pass's "medium-low, unconfirmed inference" to "high,
+directly verified against real ROM code."
+
+**Also confirmed, a real correction to how the CX-vs-82180A dual-hardware
+target has to be implemented**: `mainframe_cx.h`'s addresses (e.g. `GETRX`
+at `0x3E36`) are fixed only because they live in the CX's built-in
+mainframe ROM. On a base HP-41C + the 82180A module, the identical
+functions live in a **plug-in module at a port-dependent address** - a
+hardcoded `GOSUB` to `mainframe_cx.h`'s address (the same technique
+`HelloWorld.s` correctly uses for base-OS calls, since those *are* fixed
+on every variant) would be silently wrong on that configuration. The fix
+is the same "ordinary cross-module call" mechanism the original kickoff
+brief already anticipated: dispatch by name/XROM number through the OS's
+own catalog lookup rather than a fixed address. XROM 25 (Extended
+Functions/Memory) is the target, per the popular-modules survey's
+`.modexport` scan above.
+
+**Not yet started:** Phase 2's actual implementation (frame stack
+enter/exit primitives, proven via a hand-written FOCAL test program) -
+next up, pending go-ahead.
