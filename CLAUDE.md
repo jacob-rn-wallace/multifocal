@@ -650,3 +650,85 @@ down actually comes from - work backwards from the `A=A-1 PT` loop at
 `0x2B14` to whatever wrote that value into A); then the real milestone
 test (nested push/pop sequence, `test/frames_test.c`, all 6 steps
 passing).
+
+## Phase 2: second-call hang precisely isolated - likely a real design
+constraint, not a fixable MCODE bug (2026-09-04)
+
+Narrowed the hang above to its minimal reproduction, via a battery of
+throwaway 2-3 instruction probe modules (not checked in - reproducible
+from the description below):
+
+1. **A bare `gosub RESZFL; golong ERR110` (no arithmetic, no number-
+   format conversion, none of this project's own logic at all) hangs
+   exactly the same way**, called via real `XEQ` twice in a row (grow a
+   real CRFLD'd file 2->6, then 6->10). This completely rules out
+   `LCLS`/`LCLX`'s own arithmetic/rotation/`SETDEC` logic as the cause -
+   the bug lives entirely in `gosub RESZFL` + `golong ERR110` themselves.
+2. **The trigger is specifically "`gosub RESZFL` happens a second time in
+   the session," not "the same function is XEQ'd twice."** Two
+   *different* FAT functions, each just `gosub RESZFL; golong ERR110`,
+   XEQ'd back to back (first one growing 2->6, second growing 6->10)
+   hang on the second one identically - it doesn't matter which
+   function's body issues the second `gosub RESZFL`.
+3. **A single `gosub RESZFL` followed by a *different*, unrelated
+   function that's just `golong ERR110` (no RESZFL at all) does NOT
+   hang** - so one `gosub RESZFL` call doesn't "poison" `ERR110` for
+   later, unrelated callers. It specifically takes a *second*
+   `gosub RESZFL` in the session before the hang appears.
+4. **`gosub ERRSUB` before `gosub RESZFL`** (matching the real
+   `HelloWorld.s` example's own opening call, on the theory that it
+   resets some status/error-flag state real X-Function dispatch would
+   otherwise set up) **does not fix it** - tested directly in this exact
+   minimal reproduction.
+5. **Replacing `golong ERR110` with a bare `rtn` makes the hang go away
+   entirely** (both calls complete immediately, display blank as
+   expected without a refresh) - this pins the actual infinite loop
+   inside `ERR110`'s own code (confirmed by direct trace: `RESZFL`
+   itself always completes and returns normally, correctly growing the
+   file to the right size, both times), not inside `RESZFL`, and not a
+   stack-depth/overflow effect of calling it via `gosub` (a
+   `retstk[3]`-eviction watch confirmed real evictions of stale,
+   already-unwound entries happen on *both* the succeeding first call
+   and the succeeding "single-resize-then-unrelated-function" case
+   too, so eviction alone isn't sufficient to explain the hang either).
+6. Cross-checked against the earlier "MFSTK spelled out character by
+   character" trace observation (Section "LCLS/LCLX MCODE, continued
+   again"): `ERR110`'s display-refresh path does genuine, separate work
+   related to the *currently-open XM file's name*, not just the bare X
+   value - consistent with the hang being in that file-name-aware
+   sub-path, triggered only once a *second* raw-`gosub`-entered `RESZFL`
+   call has happened.
+
+**Working theory** (not fully confirmed at the individual-instruction
+level, but consistent with every test above): real keystroke/catalog
+`XEQ` dispatch into `RESZFL` does some setup or teardown step - beyond
+what `ERRSUB` covers - that a raw `gosub RESZFL` from custom MCODE
+skips, and this only becomes an observable bug the *second* time it's
+skipped in a session, when `ERR110`'s file-name-aware display path later
+reads whatever was left inconsistent. Confirmed NOT the cause: `LCLS`/
+`LCLX`'s own arithmetic, `SETDEC`/`SETHEX`, `ERRSUB`, or hardware call-
+stack depth (real evictions happen on working calls too).
+
+**Real design consequence, if this holds**: `RESZFL` (or possibly any
+X-Function with comparable internal complexity) may not be safely
+callable via raw `gosub` from custom MCODE more than once per session -
+directly threatening the current `LCLS`/`LCLX` design, which needs to
+call it on *every* frame push/pop. The likely fix is not a small MCODE
+patch but a **design change**: allocate `MFSTK` once, at its full
+maximum size (recursion-depth-ceiling x frame-width + header, e.g. 8x4+2
+= 34 registers, matching Phase 1's already-chosen depth ceiling), via a
+single one-time `CRFLD`/`RESZFL` call done the *same* way file creation
+already is (real keystroke/XEQ, not gosub'd from MCODE) - and have
+`LCLS`/`LCLX` track "how many registers are actually in use" via their
+own counter (still returned/consumed through X, same calling
+convention) instead of ever calling `RESZFL` again after that one-time
+setup. This trades a small amount of always-reserved XM space (bounded
+by the depth ceiling either way per Phase 1's own reasoning) for
+avoiding `RESZFL` entirely from within running MCODE - not a hardware-
+scope change, not a compatibility change, purely an internal allocation
+strategy change.
+
+**Not yet done**: implement and verify the fixed-max-size, no-repeat-
+RESZFL redesign; if it avoids the hang, that's strong confirmation of
+the theory above without needing to fully disassemble `ERR110`'s
+file-name display sub-path to find the exact missing setup step.
