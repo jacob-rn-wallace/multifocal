@@ -550,3 +550,103 @@ that it "ran with no error."
 
 Not yet done: finding and verifying that conversion; then a full,
 correct nested-frame test.
+
+## Phase 2: LCLS/LCLX MCODE, continued yet again - GTINDX retracted, self-contained conversion works, new hang found (2026-09-04)
+
+**Retraction**: the `GTINDX`-based plan above does not work. An isolated
+probe (`gosub GTINDX` with a known X value, then dump register N's raw
+nibbles directly - not just the display) showed N's content does not
+correlate with X's actual value at all between X=2 and X=14 - most
+nibbles were identical or changed in ways that don't match either input.
+Whatever `GTINDX` actually does, it is not the float-to-plain-integer
+converter the previous section assumed, and the "confirmed via
+disassembly" claim for its *behavior* (as opposed to its calling
+convention, which was correctly established back in Phase 2 groundwork)
+is retracted.
+
+**What actually pinned down the real number format**: typing digits and
+reading the display mid-entry turned out to be misleading (an earlier
+probe skipped straight from `type_str` to a raw register dump without
+ever pressing a real terminating key, and got byte patterns that don't
+match settled values). The reliable method is typing digits *followed by
+a real ENTER^ key press* (byte 13 into the key bridge - `tabcode[13]` is
+`0x13`, the same code as the `^` character, confirmed in
+`hp41_key_bridge.c`) before dumping. Doing this for several values gives
+a clean, consistent picture: "1"/"2"/"6"/"9" all settle with mantissa
+digit 1 (d1) at nibble 12 and all exponent nibbles (0-2) zero; "10"/"14"/
+"30" all settle with d1/d2 at nibbles 12/11 and exponent nibble 0 = 1.
+This exactly matches the standard normalized-float model (mantissa
+d1.d2...d10 x 10^exponent) and - cross-checked against `nutcpu.c`'s own
+`RCR n` implementation, `new_C[i] = old_C[(n+i) mod 14]` - is achieved
+from the plain-integer form (ones digit at nibble 3, matching field M's
+own carry convention) by a **fixed rotation**: `RCR 5` for a 1-digit
+result, `RCR 6` plus explicitly setting exponent nibble 0 to 1 for a
+2-digit one. The exact inverses (`RCR 9`, `RCR 8`) convert the other
+way. `src/frames.s`'s `LoadPlainFromX`/`StoreFloatIntoX` now do this
+conversion entirely themselves - no OS utility dependency, no more
+"still missing" gap on this specific point.
+
+**A second real bug found in the same pass: raw C=C+1/-1 M arithmetic is
+hex, not decimal, unless told otherwise.** `nutcpu.c`'s add/subtract/
+increment/decrement family all gate their carry threshold on a global
+`flagdec` ("if (flagdec) m=10; else m=16"), and it defaults to hex
+(0) - so incrementing nibble 3 from 9 gave `0xA`, not a BCD-corrected 0
+with carry into nibble 4, until `setdec` (real Nut mnemonic, confirmed
+in `nutcpu.c`) is issued first. Also found: **leaving decimal mode on
+across a subsequent `gsbp` call corrupts its jump target** - `gsbp`'s
+page-relocation mechanism is implemented as a mainframe-routine call
+that does its own address arithmetic, apparently in hex, so `sethex`
+must run before any `gsbp`/`gosub` that follows the decimal-mode
+arithmetic. Both fixes are in `frames.s` now: `setdec` right after
+reading the plain-integer value, `sethex` right after the arithmetic and
+before the second `gsbp` call.
+
+**With both of those fixed, the first LCLS call in a sequence now works
+correctly end-to-end**, confirmed both by `test/frames_test.c` (X=2 ->
+XEQ LCLS -> display correctly reads "6.0000") and by direct register
+trace (X's raw nibbles after the call exactly match a keystroke-settled
+"6"). This is real, verified progress on the original number-format
+gap - not yet a full pass of the milestone test, but the specific value-
+representation problem this whole investigation was chasing is now
+resolved.
+
+**Still unresolved, and newly discovered - a hang on the *second*
+consecutive LCLS call in a session.** `test/frames_test.c`'s step 2
+(X=6 -> expect 10, right after a real, successful step 1) never
+completes: the display stays blank even after millions of single-
+instruction trace steps (confirmed via an instrumented tracer,
+`test/frames_trace_test.c`'s pattern extended to run a real step 1
+first). The MCODE itself is not at fault here - traced all the way
+through: `LoadPlainFromX` correctly reads 6, the arithmetic correctly
+produces the plain-integer 10, `StoreFloatIntoX` correctly writes the
+normalized float "10" into X (raw nibbles confirmed matching a real
+settled "10"), and `gosub RESZFL` completes with the file visibly grown
+to the right register range. The hang happens *after* that, inside
+`golong ERR110`'s own display-refresh path (mainframe page 2), which
+this module never wrote. The trace shows a genuine tight loop -
+`2B14 -> 2B15 -> 2B1E -> 2B1F -> 2B20 -> 2B21 -> 2B22 -> 2B41 -> 2B42 ->
+2B5F -> 2B60 -> 2B71 -> 2B72 -> 2B73 -> 2B74 -> 2B75 -> 2B14 -> ...` -
+counting down a single hex nibble (via `A=A-1 PT`) by one per full outer
+pass, with no sign of reaching zero even after ~300,000 outer passes
+(5,000,000+ total instructions). Isolated single-call tests (skip step 1
+entirely, jump straight to X=6 -> XEQ LCLS from a size-2 file) do **not**
+hit this - the same display/catalog code completes in ~1500 steps and
+shows "10.0000" correctly. So the trigger is specifically "a second real
+LCLS/RESZFL/ERR110 invocation in the same session," not the 2-digit
+value or the "MFSTK" filename by themselves (the isolated case has both
+of those too). Compared `flagdec`/`dspon`/`fdsp`/`facces_dsp` at the
+moment `ERR110` is entered between the working (isolated) and failing
+(sequential) cases - identical in both, so the divergence is something
+else, not yet identified, inside that shared OS code path. Whether this
+is a genuine second real HP-41 quirk (unlikely - resizing an XM file
+twice in a row via plain keystrokes, tested directly with no MCODE
+involved at all, works fine both times) or something specific to
+re-entering a *custom FAT function* a second time is the open question -
+not yet root-caused.
+
+**Not yet done**: root-cause the second-call hang (a good next probe:
+trace where the huge/garbage-looking counter value that loop is counting
+down actually comes from - work backwards from the `A=A-1 PT` loop at
+`0x2B14` to whatever wrote that value into A); then the real milestone
+test (nested push/pop sequence, `test/frames_test.c`, all 6 steps
+passing).

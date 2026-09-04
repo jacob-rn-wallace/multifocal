@@ -39,6 +39,40 @@
 ;;; clobbers C while computing its jump target, so values are relayed
 ;;; through B via the one-way "a=c m; b=a m" chain, never left in C
 ;;; across a gsbp call.
+;;;
+;;; NUMBER FORMAT (the other decisive finding this phase, see CLAUDE.md
+;;; for the full derivation, including a retracted GTINDX-based
+;;; approach - keep reading, this paragraph describes what actually
+;;; works). The calculator's *displayed* X value is a normalized
+;;; float, mantissa digits d1..d10 at nibbles 12..3 (d1=most
+;;; significant) times 10^exponent (nibbles 0-2) - so typing "10"
+;;; really stores as nibble12=1,nibble0=1, NOT a plain integer. Value
+;;; arithmetic (C=C+1 M / C=C-1 M) needs the OTHER representation -
+;;; a plain BCD integer, ones digit at nibble 3, matching field M's
+;;; own p1=3 carry convention (so 6+4=10 correctly carries from
+;;; nibble 3 into nibble 4). GTINDX (mainframe_cx.h) was tried as an
+;;; OS-supplied float->plain-integer converter and is NOT that -
+;;; isolated probing (typing a known X value, calling "gosub GTINDX",
+;;; dumping register N's raw nibbles directly) showed its output does
+;;; not correlate with X's actual value at all, so this module now
+;;; does the conversion itself, both directions, via a fixed RCR
+;;; rotation. RCR n's real semantics (verified directly against
+;;; nutcpu.c's implementation) are new_C[i]=old_C[(n+i) mod 14] -
+;;; solved for our two possible widths (LCLS/LCLX only ever see values
+;;; 0-34, so always 1 or 2 digits): RCR 5 converts a 1-digit
+;;; plain-integer to float (nibble 3 -> nibble 12, exponent nibbles
+;;; already 0); RCR 6 converts a 2-digit one (nibble 4 -> nibble 12)
+;;; plus explicitly setting exponent nibble 0 to 1 (rotation alone
+;;; cannot produce a nonzero exponent digit, since the plain-integer
+;;; input never had one). RCR 9 and RCR 8 are their exact inverses
+;;; (14 minus the forward amount), used by LoadPlainFromX below to go
+;;; the other way. Both directions were cross-checked against a raw
+;;; register dump of *keystroke-settled* values (typed digits followed
+;;; by a real ENTER^ key press, not read mid-digit-entry - an early
+;;; version of this same probe skipped that and got misleading,
+;;; not-yet-committed byte patterns): "1"/"2"/"6"/"9" all show
+;;; nibble12=value with exponent nibbles all 0; "10"/"14"/"30" all
+;;; show nibble12=tens digit, nibble11=ones digit, nibble0=1.
 
               .section CODE
               .con    31
@@ -54,78 +88,84 @@ FatEnd:       .con    0,0
               .name   "MULTIFOCAL PHASE2"
 Header:       rtn
 
-;;; Zero all 14 nibbles of C. Ends with pointer at nibble 0 (the address
-;;; field position, used when this precedes an "lc <addr>; dadd=c").
-ZeroC:        pt=     13
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              lc      0
-              pt=     0
-              rtn
-
-;;; Writes B.M (the value, mantissa field) into abs reg 3 (the FOCAL X
-;;; register) as a clean positive integer - exponent and sign forced to
-;;; 0, only the mantissa carries real digits. Value must be in B.M, not
-;;; C, by the time this is gsbp-called (gsbp clobbers C on entry). A is
-;;; pure local scratch here (via ACEX on field M).
-StoreBIntoX:  c=b     m
-              a=c     m
+;;; Reads the FOCAL X register (abs reg 3) and converts its normalized
+;;; float value into plain-integer form (ones digit at nibble 3,
+;;; matching field M's own p1=3 carry convention) - the exact inverse
+;;; of StoreFloatIntoX below, via the inverse RCR amount (14 minus the
+;;; forward one). Handles exactly the two cases LCLS/LCLX ever take as
+;;; input (0-9 or 10-34). Leaves the plain-integer value in C.M.
+LoadPlainFromX:
               c=0     w
               pt=     0
               lc      3
-              dadd=c             ; address = 3 (reads nibbles 0-2)
-              c=0     x          ; re-clear the exponent field - it still holds "3,0,0" after dadd=c read it
-              c=a     m          ; restore the value into the mantissa field
-              a=0     m
-              data=c
+              dadd=c             ; address = 3
+              c=data             ; C = current float value of X
+              pt=     0
+              ?c#0    pt         ; exponent nibble 0 nonzero => 2-digit input
+              goc     TwoDigitIn
+              rcr     9          ; 1-digit: nibble 12 -> nibble 3 (undo RCR 5)
+              rtn
+TwoDigitIn:   rcr     8          ; 2-digit: nibble 12->4, nibble 11->3 (undo RCR 6)
+              pt=     6
+              c=0     pt         ; clear the stray nibble the old exponent digit rotated into
               rtn
 
-;;; C = current X register's raw 14-nibble value (abs reg 3). Safe to
-;;; read C.M immediately after this returns - "rtn" doesn't touch C.
-LoadXIntoC:   c=0     w
+;;; Converts B.M (a plain-integer value - ones digit at nibble 3, as
+;;; LoadPlainFromX/field-M arithmetic produce) into normalized float
+;;; form and writes it into X (abs reg 3). Handles exactly the two
+;;; cases LCLS/LCLX ever produce (0-9 or 10-34) - see the file header
+;;; comment for the RCR-rotation derivation. Value must be in B.M, not
+;;; C, by the time this is gsbp-called (gsbp clobbers C on entry).
+StoreFloatIntoX:
+              c=0     w
+              c=b     m          ; C = plain-integer value, all other fields clean (0)
+              pt=     4
+              ?c#0    pt         ; nibble 4 (tens digit) nonzero => 2-digit result
+              goc     TwoDigit
+              rcr     5          ; 1-digit: nibble 3 -> nibble 12, exponent stays 0
+              goto    Store
+TwoDigit:     rcr     6          ; 2-digit: nibble 4 -> nibble 12
+              pt=     0
+              lc      1          ; exponent nibble 0 = 1
+Store:        a=c     w          ; stash the complete float value while DADD is set up
+              c=0     w
               pt=     0
               lc      3
-              dadd=c
-              c=data
+              dadd=c             ; address = 3
+              c=a     w          ; restore the complete float value
+              data=c
               rtn
 
               .name   "LCLS"
 ;;; X in: current stack size. X out: new size (current + 4). Grows the
 ;;; already-current MFSTK file by 4 registers via RESZFL - no seeking,
 ;;; no header, no ALPHA touch (see file header for why).
-Lcls:         gsbp    LoadXIntoC    ; C.M = current size
+Lcls:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
+              setdec                ; C=C+1/-1 M do raw hex nibble arithmetic unless decimal mode is on (confirmed empirically - 9+1 gave 0xA, not a BCD-corrected 0-with-carry, until this was added)
               c=c+1   m
               c=c+1   m
               c=c+1   m
               c=c+1   m             ; C.M = current+4
+              sethex                ; restore hex mode before any further gosub/gsbp - gsbp's own mainframe relocation helper does its own address arithmetic in hex, and leaving decimal mode on corrupted its jump target (confirmed empirically: the very next gsbp landed on the wrong page)
               a=c     m
               b=a     m             ; B.M = new size
-              gsbp    StoreBIntoX   ; X = new size
+              gsbp    StoreFloatIntoX ; X = new size, normalized float form
               gosub   RESZFL        ; grow the file to that size
               golong  ERR110        ; clean top-level completion - refreshes the display with X, goes idle (a bare "rtn" here left the display blank, confirmed empirically - see CLAUDE.md)
 
               .name   "LCLX"
 ;;; X in: current stack size. X out: new size (current - 4). Shrinks
 ;;; the already-current MFSTK file by 4 registers via RESZFL.
-Lclx:         gsbp    LoadXIntoC    ; C.M = current size
+Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
+              setdec                ; see LCLS's own comment on this - same reasoning
               c=c-1   m
               c=c-1   m
               c=c-1   m
               c=c-1   m             ; C.M = current-4
+              sethex                ; see LCLS's own comment on this - same reasoning
               a=c     m
               b=a     m             ; B.M = new size
-              gsbp    StoreBIntoX   ; X = new size
+              gsbp    StoreFloatIntoX ; X = new size, normalized float form
               gosub   RESZFL        ; shrink the file to that size
               golong  ERR110        ; clean top-level completion, same reasoning as LCLS above
 
