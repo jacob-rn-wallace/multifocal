@@ -281,6 +281,81 @@ own catalog lookup rather than a fixed address. XROM 25 (Extended
 Functions/Memory) is the target, per the popular-modules survey's
 `.modexport` scan above.
 
-**Not yet started:** Phase 2's actual implementation (frame stack
-enter/exit primitives, proven via a hand-written FOCAL test program) -
-next up, pending go-ahead.
+## Phase 2: XM register read/write verified, with a correction (2026-09-04)
+
+Extending Phase 2 groundwork to an actual working read/write cycle
+surfaced a real mistake in the groundwork above, now fixed, plus a
+genuine emulator bug worth documenting permanently.
+
+**Correction to the "Phase 2 groundwork" section above**: the claim there
+that `SAVERX`/`GETRX`'s internals were "confirmed via disassembly" was
+built on disassembling the *wrong* ROM - `tools/cx_disasm.c` was wired
+with soynut's plain `NUT1.ROM` (the C/CV base OS) at page 1, not
+`XNUT1.ROM` (the real CX base OS). **`NUT0-2.ROM` and `XNUT0-2.ROM` are
+genuinely different ROM dumps** (confirmed with `cmp`) - the plain
+variant's OS never looks for CX extension pages at all, so combining it
+with `CXFUNS0-1.ROM` is not a valid hardware configuration (mirrors real
+hardware: a genuine CX's mainframe ROM is one built-together 5-page unit,
+not a C/CV with extra pages bolted on). The overall calling-convention
+*model* (FOCAL-level parameter passing via `GTINDX`/`GTFLNA`, no exotic
+raw-register convention) turned out to still be correct, but the specific
+address-level claims about `SAVERX`'s internal control flow in that
+section were analyzing bytes that don't actually run in a real CX boot -
+treat them as retracted. The right boot config is `XNUT0/1/2.ROM` at
+pages 0-2 + `CXFUNS0/1.ROM` at pages 3-4 (`test/nut_rom_cx.c`/`.h`,
+`nut_boot_cx()`), confirmed against the emulator's own save-state format
+in `emu41gcc/loader.c`: `espaceRAM` registers 64-191 are the CX's built-in
+128 XM registers.
+
+**Real mistake in the primitives themselves, also corrected**: `SAVER`/
+`GETR` are **bulk whole-file copy operations** (copy every main data
+register into/out of the file at once), not single-register read/write -
+a wrong assumption in both the original research fork and my own
+follow-up. On a fresh cold boot there are zero sized data registers, so
+`SAVER` correctly copies zero registers and "succeeds" with no visible
+effect - which is exactly the confusing "ran with no error, nothing
+changed" symptom that triggered a long debugging detour. **The real
+single-register primitives are `SAVEX`/`GETX`** (not `GETXX` - that
+appears in `mainframe_cx.h` but isn't a real catalog name; typing it
+returns `NONEXISTENT`). `SAVEX` writes X into the current file's current
+register and advances the pointer; `GETX` reads the current register into
+X. **Proven empirically** in `test/xm_probe_test.c` (`make -C test
+xm_probe`) via direct `espaceRAM` inspection, not just the display: a real
+write lands at the expected registers, confirmed by a byte-level diff
+before/after `SAVEX`.
+
+**A genuine, reproducible `emu41gcc` bug, characterized but not fixed**
+(per this project's own rule of never editing that vendored file without
+explicit sign-off - see below): typing `SEEKPT` or `SEEKPTA` (the manual's
+own real spelling) via `XEQ ALPHA ... ALPHA` reliably crashes the emulator
+process (confirmed via AddressSanitizer: a wild pointer read in `fetch1()`
+on a garbage address, called from `executeNUT()`). This reproduces
+independent of the SAVEP/EMROOM crash noted in the first research pass,
+suggesting a broader gap in this ROM configuration's catalog-miss
+handling rather than one specific broken function. `SEKPT` (the literal,
+single-E spelling `mainframe_cx.h` actually uses) does *not* crash - it
+cleanly returns `NONEXISTENT`, meaning it's most likely an internal-only
+helper address, not something independently reachable from the catalog
+despite living in the same header as genuine catalog names like `SAVEX`/
+`GETX`/`CRFLD`. **No known-working way to explicitly seek to an arbitrary
+XM register currently exists in this test setup.** This blocks a full
+random-access write→seek→read proof, and is a real, live blocker for
+Phase 3 (LSTO/LRCL need random access to resolve "local register N").
+
+**Design consequence, and why this doesn't block Phase 2 itself**: Phase
+2's actual milestone (prove frame enter/exit works) only needs
+*sequential* register access - pushing a frame's locals one after another
+via repeated `SAVEX` calls (which auto-advance the pointer, exactly
+matching a stack's natural push order) and popping by walking back through
+them, never needing to jump to an arbitrary index mid-frame. The random-
+access requirement is specifically a Phase 3 concern (arbitrary-numbered
+`LRCL`/`LSTO`), which can be deferred until the `SEEKPT`/`SEEKPTA` crash is
+properly root-caused (or a different, working seek mechanism is found).
+
+`emu41gcc` itself was never modified - all of the above lives in
+MultiFOCAL's own `test/` files, reading soynut's real ROMs/core read-only,
+per the established convention.
+
+**Not yet started:** Phase 2's actual frame push/pop MCODE (the design
+above gives a clear, unblocked path via sequential `SAVEX`/`GETX`) and its
+proof via a hand-written FOCAL test program - next up, pending go-ahead.

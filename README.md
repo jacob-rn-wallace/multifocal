@@ -65,6 +65,16 @@ main register file nothing at all. Frames are variable-width, built on
 XM's own file-allocation OS routines, with a default (tunable) recursion
 depth of 8.
 
+**Phase 2 groundwork is done too**: the real single-register XM
+read/write primitives (`SAVEX`/`GETX`) are confirmed working end to end
+against a real CX boot in the emulator, verified via direct memory
+inspection rather than just the display. Along the way, a genuine,
+reproducible crash bug was found and documented in the emulator's
+handling of `SEEKPT`/`SEEKPTA` — characterized, not patched, since
+`emu41gcc` is a vendored file this project doesn't edit. That blocks
+random-access seeking for now (a Phase 3 concern), but not Phase 2's
+frame push/pop, which only needs sequential access.
+
 See `CLAUDE.md` for the full session-by-session status, the reasoning
 behind each decision, and what's next (Phase 2: frame stack enter/exit
 primitives).
