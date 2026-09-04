@@ -503,3 +503,50 @@ entirely. `GTINDX` is a base-OS *internal* utility (from `mainframe.h`,
 not a catalog-visible X-Function), so it should be safe to `gosub`
 directly without the ALPHA-abandonment problem above - this needs
 verifying, then wiring in, before the arithmetic will work.
+
+## Phase 2: LCLS/LCLX MCODE, continued again - the real number-format split (2026-09-04)
+
+Verified the `GTINDX` theory directly, two ways:
+
+1. **Disassembled `GTINDX` itself** (0x34A4, `#include "mainframe.h"` -
+   needs a manual `.equlab`, it's not exported by name): confirmed it
+   reads X via `C=REGN 3 (X)` - a *different* addressing mechanism
+   entirely from the `DADD=C`/`DATA=C` pair this project's own code has
+   been using (`REGN` addresses the small set of fixed FOCAL stack/flag
+   registers directly by index; `DADD`/`DATA` address the general
+   numbered main-memory register file - `DADD=3` happens to coincide
+   with the real X register too, which is why `StoreBIntoX`/`LoadXIntoC`
+   were never *wrong*, just working with a different number
+   *representation* than expected). `GTINDX` does real validation/
+   parsing (bounds checks, `ST=1 2/3` flag tests) and leaves its result
+   in **register N**, confirmed via `N=C` appearing three times.
+2. **Empirically confirmed what N actually holds**, with a tiny probe:
+   typed `2`, ran `gosub GTINDX; gosub <write N into X>; golong ERR110`,
+   and the display showed `0.0002` - not `2`. This is the real, direct
+   evidence for the actual split: **the *displayed* calculator number
+   format is a normalized float** (value = 0.d1d2...d10 x 10^exp, d1 at
+   nibble 12, exponent in nibbles 0-2 - so a typed "2" is really
+   "0.2 x 10^1", d1=2 at nibble 12, exponent=1) - **`GTINDX`'s output in
+   N is a *plain BCD integer* instead** (ones digit at nibble 3, no
+   exponent, no normalization) - matching field M's own `p1=3`
+   increment convention exactly, which is *why* `C=C+1 M` "worked" on
+   the wrong nibble all along: it was never wrong about field M's own
+   layout, the mismatch was calling it on a value still in the *other*
+   (float-display) representation.
+
+**Consequence, and the concrete remaining gap**: `GTINDX` is exactly the
+right tool to turn a caller's typed X value into the plain-integer form
+`C=C+1 M`/`C=C-1 M` can correctly operate on. What's still missing is
+the *reverse* conversion - turning the resulting plain integer back into
+the normalized float format needed for the final "write X so it displays
+correctly" step (plain `SAVEX`/`StoreBIntoX` after arithmetic in the
+plain-integer domain will show something like `0.0006` instead of `6`,
+the same way the N-into-X probe did). Need to find the base-OS utility
+that does this (the natural counterpart to `GTINDX` - likely something
+in the "PUTX"/"STOX"/normalize-and-store family, not yet identified) and
+verify it the same way: an isolated probe, typed input, `gosub
+<candidate>`, check the actual displayed number rather than trusting
+that it "ran with no error."
+
+Not yet done: finding and verifying that conversion; then a full,
+correct nested-frame test.
