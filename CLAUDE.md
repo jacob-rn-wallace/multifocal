@@ -356,5 +356,77 @@ push/pop and Phase 3's random-access `LRCL`/`LSTO`.
 MultiFOCAL's own `test/nut_rom_cx.c`, reading soynut's real ROMs/core
 read-only, per the established convention.
 
-**Not yet started:** Phase 2's actual frame push/pop MCODE and its proof
-via a hand-written FOCAL test program - next up, pending go-ahead.
+## Phase 2: LCLS/LCLX MCODE - substantial progress, not yet fully working (2026-09-04)
+
+Wrote real `LCLS`/`LCLX` MCODE (`src/frames.s`) and a headless test
+(`test/frames_test.c`) exercising 3 nested pushes then 3 pops. Along the
+way, found and fixed several real, fundamental MCODE bugs - each is a
+durable lesson for all future MCODE in this project, independent of
+whether this specific test passes yet:
+
+1. **Page-relocatable calls.** Plain `gosub <local_label>` compiles to an
+   *absolute* address under `(position independent)` linking, assuming
+   the module loads at whatever page the linker happens to pick - wrong
+   whenever loaded elsewhere (page 8, in every test here). The fix is
+   Calypsi's dedicated `gsbp`/`golp` instructions (see the Calypsi Nut
+   Guide's "Page relocatable jumps" section) for any call to a routine in
+   *this module's own page*; plain `gosub`/`golong` stay correct for
+   fixed mainframe/CX addresses. Confirmed via instruction trace: the
+   first version of this code, without `gsbp`, jumped straight into
+   unrelated base-OS code on its very first internal call.
+2. **`gsbp` clobbers C.** The page-relocation mechanism itself uses C to
+   compute the jump target, so a value placed in C immediately before a
+   `gsbp` call is gone by the time the callee's first instruction runs.
+   `B` is untouched by it (confirmed empirically) - values now get
+   relayed into B via the one-way `a=c m; b=a m` chain before any `gsbp`
+   call that needs them.
+3. **Field X (assembler) is not the FOCAL X-register's value - it's the
+   exponent.** The real 14-nibble HP-41 register format is: nibble 13 =
+   sign, nibbles 3-12 = "M" field = the 10 mantissa digits (ones digit at
+   nibble 12), nibbles 0-2 = "X" field = the exponent. Arithmetic on the
+   *value* (increment/decrement/copy) needs field M and nibble 12, not
+   field X and nibble 0 - a name collision between "assembler field X"
+   and "the calculator's X-register" cost real time here. Field X
+   (nibbles 0-2) remains the correct, deliberate choice for `DADD=C`'s
+   address argument specifically - that part was never wrong.
+4. **`SEEKPTA` to a file's own last register fails** ("END OF FL"),
+   confirmed via pure keystrokes independent of any MCODE (works fine on
+   a 10-register file seeking to register 1; fails on a 1-register file
+   seeking to its only register 1). Since this design's header lives
+   permanently at register 1, the stack file must never be sized such
+   that register 1 is also the last register - fixed by creating it at
+   size 2 initially rather than 1.
+5. Also confirmed, separately: `SAVER`/`GETR`/`SAVEP`/`EMROOM`/`RESZFL`
+   crash theories from earlier sessions were self-inflicted bugs (wrong
+   ROM in disassembly; a page-5 bank-switch wiring bug in the test
+   harness), not real emulator or ROM problems - see the sections above.
+   That discipline (assume MultiFOCAL's own code first) held up again
+   here and is worth continuing to apply.
+
+**Still unresolved, honestly**: even with all of the above fixed, the
+test does not yet show correct values (`SAVEX` at the end of each
+`LCLS`/`LCLX` still displays "1.0000" instead of the expected size, and
+querying the header afterward reads back 0 every time) - no crashes, no
+error messages, just wrong values, meaning something in the register-
+passing chain between the `GETX`/arithmetic/`SAVEX` steps still isn't
+correct. A hypothesis that this was Nut's 4-level hardware call-stack
+being exceeded by this code's helper-routine nesting was tested (inlined
+one layer of nesting) and did **not** fix it, ruling that out as the sole
+cause. Root cause not yet found - this needs another focused debugging
+pass, not a continuation of guessing.
+
+**Scope cuts accepted for this proof-of-concept** (documented in
+`src/frames.s` itself too): both `LCLS`/`LCLX` use a fixed width of 4
+registers per frame rather than reading a caller-supplied count or being
+truly self-describing via a trailer register - the original variable-
+width design needs two independent values alive across OS calls
+simultaneously, and only one safe carrier register (B) was confirmed;
+solvable, but deferred. File creation is a separate one-time setup step
+the test harness does, not something `LCLS` does idempotently itself
+(calling `CRFLD` unconditionally hits `DUP FL` on repeat calls, and a
+real HP-41 error return does not hand control back mid-routine).
+
+**Not yet done:** root-causing the remaining value-passing bug; then the
+real Phase 2 milestone (a hand-written FOCAL test program - as opposed to
+this C-harness-driven keystroke simulation - showing correct nested
+frame lifecycle by hand inspection).
