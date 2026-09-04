@@ -1,5 +1,9 @@
 # MultiFOCAL
 
+**Repo:** https://github.com/jacob-rn-wallace/multifocal (public). Commit and
+push regularly at real checkpoints as work progresses — standing preference,
+not something to wait to be asked for each time.
+
 Local variable scoping for FOCAL (HP-41 native language), via subroutine-local
 storage frames. Scoping only — no typed/structured data (that's the separate,
 independently-timed **ConFOCAL**/VariFOCAL project). Full goals, constraints,
