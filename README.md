@@ -39,8 +39,8 @@ neither project is a prerequisite for the other.
 
 ## Status
 
-**Phase 0 (toolchain) is done.** The full assemble → link → load → execute
-loop is proven end to end:
+**Phase 0 is complete.** The full assemble → link → load → execute loop is
+proven end to end:
 
 - [Calypsi](https://github.com/hth313/Calypsi-tool-chains) (NutStudio's
   actively-maintained successor, itself SDK41's modern replacement)
@@ -50,11 +50,15 @@ loop is proven end to end:
   against the genuine HP-41 OS ROM, and reached by an actual
   `XEQ ALPHA MFTEST ALPHA` keystroke sequence — confirmed by the routine's
   own message appearing on the simulated display.
+- A popular-modules compatibility survey and a pass over the HP-41
+  community's own coding-convention material are both done — see
+  `CLAUDE.md`. Headline finding: XROM *numeric* ID collisions are common
+  and tolerated across real modules; the actual compatibility gate is
+  function-**name** collisions in the catalog and register-range overlap,
+  since `XEQ ALPHA <name> ALPHA` resolves by name, not by number.
 
 See `CLAUDE.md` for the full session-by-session status, open design
-decisions, and what's next (a popular-modules compatibility survey,
-community naming-convention research, and Phase 1's storage-design
-decisions).
+decisions, and what's next (Phase 1's storage-design decisions).
 
 ## Building and testing
 
