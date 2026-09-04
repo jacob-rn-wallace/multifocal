@@ -1,0 +1,5 @@
+*.o
+*.lst
+*.mod
+build/
+toolchain/calypsi-nut-*/

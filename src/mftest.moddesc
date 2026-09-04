@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ModFile FileFormat="MOD1" Title="MultiFOCAL Phase0" Version="A" PartNumber="" Author="" Copyright="" License="" Comments="Phase 0 proof-of-concept only - not a real MultiFOCAL function set" Category="2" Hardware="0" MemoryModules="0" XMemoryModules="0">
+  <Page Name="Page4K" Identity="HW1M" Page="Any" PageGroup="0" Bank="1" BankGroup="0" RAM="0" WriteProtect="0" FAT="1"/>
+</ModFile>
