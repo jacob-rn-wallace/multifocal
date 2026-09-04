@@ -57,8 +57,17 @@ proven end to end:
   function-**name** collisions in the catalog and register-range overlap,
   since `XEQ ALPHA <name> ALPHA` resolves by name, not by number.
 
-See `CLAUDE.md` for the full session-by-session status, open design
-decisions, and what's next (Phase 1's storage-design decisions).
+**Phase 1 (storage design) is also done.** Frames will live in Extended
+Memory (XM) rather than a reserved register range — the deliberate
+tradeoff of narrowing to XM-equipped hardware (a real HP-41CX, or a base
+HP-41C plus the real HP 82180A module) in exchange for costing the user's
+main register file nothing at all. Frames are variable-width, built on
+XM's own file-allocation OS routines, with a default (tunable) recursion
+depth of 8.
+
+See `CLAUDE.md` for the full session-by-session status, the reasoning
+behind each decision, and what's next (Phase 2: frame stack enter/exit
+primitives).
 
 ## Building and testing
 

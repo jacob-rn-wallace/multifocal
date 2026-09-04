@@ -169,7 +169,64 @@ storage frames) already existing as a module or proposal in the
 community — this appears to be a genuinely new capability for the
 platform, not a reinvention of something already tried.
 
-**Phase 0 is now fully complete.** **Not yet started:** all of Phase 1's
-open decisions (frame storage location, frame size, recursion ceiling, LCL
-naming) — and the joint register-budget conversation with ConFOCAL that's
-supposed to happen before Phase 1 commits to anything.
+**Phase 0 is fully complete.**
+
+## Phase 1 decisions (2026-09-04)
+
+**1. Frame storage location: Extended Memory (XM), not a reserved register
+range.** Explicit, deliberate hardware-scope tradeoff, made with the user's
+sign-off after seeing the numbers:
+
+- A reserved register range works on *any* HP-41 down to a bare 41C (63
+  registers total), but even a small reservation (~8-12 registers) is a
+  painful ~15-20% bite out of the smallest machine's *entire* memory.
+- XM costs the main register pool nothing — it's a separate ~100-200+
+  register pool organized as named files, not shared with the 63-319
+  register main file at all.
+- **Corrected an assumption made when this tradeoff was first framed**:
+  XM is *not* CX-exclusive. The real, period-correct HP 82180A "Extended
+  Functions/Extended Memory" module gives a base HP-41C genuine XM
+  capability too - so choosing XM as primary narrows things less than
+  "CX-only" would have. **HP-41CV's XM compatibility is genuinely unclear
+  from what was researched** (contradictory claims found - CV's built-in
+  319 registers may or may not conflict with XM's address space) and
+  needs direct verification before stating a firm answer; don't assume
+  either way yet.
+- This is a hardware-*scope* narrowing (which real HP-41 configurations
+  are supported), not a violation of the "stay on original hardware"
+  constraint itself (XM is 100% original, real HP hardware) - worth being
+  precise about the distinction.
+- XM is explicitly a shared resource with ConFOCAL's future needs (see
+  below), which register-range storage would not have been to the same
+  degree - this makes the still-pending ConFOCAL coordination more
+  load-bearing under this design than it would have been otherwise.
+
+**2. Frame size: variable-width**, reversing an initial fixed-width-first
+recommendation once the storage location moved to XM. XM already provides
+file-based, variable-length allocation via the OS's own routines
+(`SAVED`/`GETD`/`EMROOM`-style) - the "meaningfully more complexity, pulls
+Phase 3+ work forward" cost the original brief flagged for variable-width
+was specific to hand-rolling an allocator inside the flat register file,
+and mostly doesn't apply once XM's own primitives are doing that work.
+
+**3. Recursion depth ceiling: default 8**, as a tunable assembly-time
+constant (not hardcoded) - deeper than the Nut hardware's own native
+4-level call stack (so MultiFOCAL is never more restrictive than existing
+native nesting for typical use), while still leaving the large majority of
+a typical XM pool free, since that pool is shared with ConFOCAL.
+
+**4. LCLS/LCLX/LSTO/LRCL naming**: still genuinely open (not gating
+Phase 2's frame-stack work) - to be resolved in Phase 3, checked against
+the `.modexport` name-collision data from the popular-modules survey above
+before anything is finalized.
+
+**ConFOCAL register/XM budget**: still not a real negotiation (ConFOCAL
+doesn't exist as a project yet) - proceeding on an explicit placeholder
+basis per the user's direction (2026-09-04): keep the default XM
+reservation small and clearly documented as provisional, and re-confirm it
+once ConFOCAL exists with its own real numbers. This is now more
+load-bearing than it would have been under a register-range design, since
+XM is the literal shared resource both projects would draw from.
+
+**Not yet started:** Phase 2 (frame stack enter/exit primitives) - next up,
+pending go-ahead.
