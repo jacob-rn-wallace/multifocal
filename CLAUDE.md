@@ -324,38 +324,37 @@ xm_probe`) via direct `espaceRAM` inspection, not just the display: a real
 write lands at the expected registers, confirmed by a byte-level diff
 before/after `SAVEX`.
 
-**A genuine, reproducible `emu41gcc` bug, characterized but not fixed**
-(per this project's own rule of never editing that vendored file without
-explicit sign-off - see below): typing `SEEKPT` or `SEEKPTA` (the manual's
-own real spelling) via `XEQ ALPHA ... ALPHA` reliably crashes the emulator
-process (confirmed via AddressSanitizer: a wild pointer read in `fetch1()`
-on a garbage address, called from `executeNUT()`). This reproduces
-independent of the SAVEP/EMROOM crash noted in the first research pass,
-suggesting a broader gap in this ROM configuration's catalog-miss
-handling rather than one specific broken function. `SEKPT` (the literal,
-single-E spelling `mainframe_cx.h` actually uses) does *not* crash - it
-cleanly returns `NONEXISTENT`, meaning it's most likely an internal-only
-helper address, not something independently reachable from the catalog
-despite living in the same header as genuine catalog names like `SAVEX`/
-`GETX`/`CRFLD`. **No known-working way to explicitly seek to an arbitrary
-XM register currently exists in this test setup.** This blocks a full
-random-access write→seek→read proof, and is a real, live blocker for
-Phase 3 (LSTO/LRCL need random access to resolve "local register N").
+**A crash that looked like an `emu41gcc` bug, but wasn't - root-caused and
+fixed in our own test harness.** `SEEKPT`/`SEEKPTA` (and, separately,
+`SAVEP`/`EMROOM`) initially appeared to reliably crash the emulator
+(AddressSanitizer showed a wild pointer read in `fetch1()`). The real
+cause: `test/nut_rom_cx.c` had `CXFUNS1.ROM` wired at a flat page 4. Real
+HP-41CX hardware doesn't work that way - pages 0-3 are flat ROM
+(`XNUT0-2`, `CXFUN0`), but **page 5 is bank-switched between `TIMER`
+(bank 0) and `CXFUN1`/`CXFUNS1.ROM` (bank 1); page 4 isn't used at all**
+(confirmed against a real HP-41CX emulator's own published page-mapping
+config). `emu41gcc/nutcpu.c` already has a generic bank-switch mechanism
+for exactly this (`typmod[page]==2`, the "CXTIME" case in `enrom()`) -
+`nut_rom_cx.c` just wasn't using it. `CRFLD`/`SAVEX`/`GETX` happened to
+work under the old, wrong wiring because they never need code actually
+located on page 5; anything that does (apparently including `RESZFL`,
+found crashing the same way once tested) hit the missing page and
+crashed. **Fixed and empirically re-verified** (`test/resz_probe_test.c`,
+`make -C test resz_probe`): with page 5 correctly bank-switched, `RESZFL`
+grows/shrinks cleanly (a shrink past valid bounds now produces a real,
+documented HP-41 error, `FL SIZE ERR`, instead of a crash - exactly the
+kind of clean failure mode genuine hardware fidelity should produce), and
+`SEEKPTA` seeks to an arbitrary register with no crash at all.
 
-**Design consequence, and why this doesn't block Phase 2 itself**: Phase
-2's actual milestone (prove frame enter/exit works) only needs
-*sequential* register access - pushing a frame's locals one after another
-via repeated `SAVEX` calls (which auto-advance the pointer, exactly
-matching a stack's natural push order) and popping by walking back through
-them, never needing to jump to an arbitrary index mid-frame. The random-
-access requirement is specifically a Phase 3 concern (arbitrary-numbered
-`LRCL`/`LSTO`), which can be deferred until the `SEEKPT`/`SEEKPTA` crash is
-properly root-caused (or a different, working seek mechanism is found).
+**Consequence**: the earlier "must stay sequential-only, no seeking"
+design constraint is lifted. A single growing/shrinking XM file with real
+seek-based navigation (the original, more natural variable-width design
+from Phase 1/2 groundwork) is back on the table for both Phase 2's frame
+push/pop and Phase 3's random-access `LRCL`/`LSTO`.
 
-`emu41gcc` itself was never modified - all of the above lives in
-MultiFOCAL's own `test/` files, reading soynut's real ROMs/core read-only,
-per the established convention.
+`emu41gcc` itself was never modified - the bug was entirely in
+MultiFOCAL's own `test/nut_rom_cx.c`, reading soynut's real ROMs/core
+read-only, per the established convention.
 
-**Not yet started:** Phase 2's actual frame push/pop MCODE (the design
-above gives a clear, unblocked path via sequential `SAVEX`/`GETX`) and its
-proof via a hand-written FOCAL test program - next up, pending go-ahead.
+**Not yet started:** Phase 2's actual frame push/pop MCODE and its proof
+via a hand-written FOCAL test program - next up, pending go-ahead.

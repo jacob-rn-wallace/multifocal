@@ -15,7 +15,7 @@ SOYNUT := ../soynut
 
 .PHONY: mod cx-roms test clean
 mod: build/mftest_rom.c
-cx-roms: build/xnut_rom.c build/cxfuns_rom.c
+cx-roms: build/xnut_rom.c build/cxfuns_rom.c build/timer_rom.c
 
 build/mftest.o: src/mftest.s
 	mkdir -p build
@@ -34,6 +34,10 @@ build/xnut_rom.c:
 build/cxfuns_rom.c:
 	mkdir -p build
 	python3 $(SOYNUT)/roms/rom_to_c.py $(SOYNUT)/roms/CXFUNS0.ROM $(SOYNUT)/roms/CXFUNS1.ROM > build/cxfuns_rom.c
+
+build/timer_rom.c:
+	mkdir -p build
+	python3 $(SOYNUT)/roms/rom_to_c.py $(SOYNUT)/roms/TIMER.ROM > build/timer_rom.c
 
 test: mod
 	$(MAKE) -C test run

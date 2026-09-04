@@ -25,11 +25,14 @@ STD := -std=gnu11
 INC := -I$(SOYNUT)/emu41gcc -I$(SOYNUT)/firmware/emu41gcc_compat -I$(SOYNUT)/firmware -I.
 NUT_STUBS_INC := -include $(SOYNUT)/firmware/emu41gcc_compat/nut_stubs.h
 
-.PHONY: all run clean mod cx-roms xm_probe xm_trace
+.PHONY: all run clean mod cx-roms xm_probe xm_trace resz_probe
 all: $(BUILD)/phase0_loop_test
 
 xm_probe: cx-roms $(BUILD)/xm_probe_test
 	./$(BUILD)/xm_probe_test
+
+resz_probe: cx-roms $(BUILD)/resz_probe_test
+	./$(BUILD)/resz_probe_test
 
 xm_trace: cx-roms $(BUILD)/xm_trace_test
 	./$(BUILD)/xm_trace_test
@@ -102,11 +105,26 @@ $(BUILD)/cxfuns_rom.o: ../build/cxfuns_rom.c | $(BUILD)
 $(BUILD)/xnut_rom.o: ../build/xnut_rom.c | $(BUILD)
 	$(CC) $(STD) $(INC) -c -o $@ $<
 
+$(BUILD)/timer_rom.o: ../build/timer_rom.c | $(BUILD)
+	$(CC) $(STD) $(INC) -c -o $@ $<
+
 $(BUILD)/xm_probe_test.o: xm_probe_test.c | $(BUILD)
 	$(CC) $(STD) -fcommon -Wall -Wextra -Wpedantic -Werror $(INC) -c -o $@ $<
 
 $(BUILD)/xm_probe_test: $(BUILD)/xm_probe_test.o $(BUILD)/nut_rom_cx.o $(BUILD)/cxfuns_rom.o \
-                         $(BUILD)/xnut_rom.o \
+                         $(BUILD)/xnut_rom.o $(BUILD)/timer_rom.o \
+                         $(BUILD)/nutcpu.o $(BUILD)/display.o \
+                         $(BUILD)/nut_stubs.o $(BUILD)/nut_globals.o \
+                         $(BUILD)/hp41_key_bridge.o $(BUILD)/hp41_key_hold_bridge.o \
+                         $(BUILD)/hp41_hpil_controller.o $(BUILD)/hp41_hpil_video_bridge.o \
+                         $(BUILD)/hpil_device.o $(BUILD)/ilvideo_term.o $(BUILD)/ilvideo_device.o
+	$(CC) -o $@ $^
+
+$(BUILD)/resz_probe_test.o: resz_probe_test.c | $(BUILD)
+	$(CC) $(STD) -fcommon -Wall -Wextra -Wpedantic -Werror $(INC) -c -o $@ $<
+
+$(BUILD)/resz_probe_test: $(BUILD)/resz_probe_test.o $(BUILD)/nut_rom_cx.o $(BUILD)/cxfuns_rom.o \
+                         $(BUILD)/xnut_rom.o $(BUILD)/timer_rom.o \
                          $(BUILD)/nutcpu.o $(BUILD)/display.o \
                          $(BUILD)/nut_stubs.o $(BUILD)/nut_globals.o \
                          $(BUILD)/hp41_key_bridge.o $(BUILD)/hp41_key_hold_bridge.o \
@@ -121,7 +139,7 @@ $(BUILD)/xm_trace_test.o: xm_trace_test.c | $(BUILD)
 	$(CC) $(STD) -fcommon -Wall -Wextra -Wpedantic -Werror $(INC) -include $(SOYNUT)/tools/desas_proto.h -c -o $@ $<
 
 $(BUILD)/xm_trace_test: $(BUILD)/xm_trace_test.o $(BUILD)/desas41_trace.o $(BUILD)/nut_rom_cx.o $(BUILD)/cxfuns_rom.o \
-                         $(BUILD)/xnut_rom.o \
+                         $(BUILD)/xnut_rom.o $(BUILD)/timer_rom.o \
                          $(BUILD)/nutcpu.o $(BUILD)/display.o \
                          $(BUILD)/nut_stubs.o $(BUILD)/nut_globals.o \
                          $(BUILD)/hp41_key_bridge.o $(BUILD)/hp41_key_hold_bridge.o \
