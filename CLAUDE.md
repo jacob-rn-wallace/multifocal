@@ -426,7 +426,80 @@ the test harness does, not something `LCLS` does idempotently itself
 (calling `CRFLD` unconditionally hits `DUP FL` on repeat calls, and a
 real HP-41 error return does not hand control back mid-routine).
 
-**Not yet done:** root-causing the remaining value-passing bug; then the
-real Phase 2 milestone (a hand-written FOCAL test program - as opposed to
-this C-harness-driven keystroke simulation - showing correct nested
-frame lifecycle by hand inspection).
+**Not yet done (as of first pause):** root-causing the remaining value-
+passing bug.
+
+## Phase 2: LCLS/LCLX MCODE, continued - real architectural finding, redesigned around it (2026-09-04)
+
+Picked back up on the value-passing bug with a battery of small, isolated
+probe modules (each doing "gosub `<function>`" then a message-display
+side effect that only appears if control genuinely returns - not checked
+in, throwaway, reproducible from the description below). This found the
+actual root cause, which was bigger than a simple bug:
+
+**Confirmed architectural fact: any real X-Function that touches the
+ALPHA register abandons its caller and jumps straight to the OS idle
+loop when called directly via `gosub` from third-party MCODE, instead of
+returning via `rtn` like an ordinary subroutine.** Confirmed for
+`SEEKPTA`, `RCLPTA`, and `CRFLD` - each one, called via `gosub` with
+correct ALPHA/X set up beforehand, left the *next* instruction (a message
+display, chosen specifically because it's only visible if control truly
+returns) never executed; the hardware return-address stack (`retstk[4]`
+in `nutcpu.h`, confirmed by instrumenting it directly) shows the pushed
+return address sitting unclaimed while execution wanders through several
+properly-paired `gosub`/`rtn` calls before eventually falling into the
+idle address. **Purely numeric functions (`GETX`, `SAVEX`, `RESZFL`) all
+confirmed to return normally** via the same technique. This makes sense
+architecturally: these are catalog-dispatch-only entry points whose
+"success" path is inherently "hand control back to the OS's normal
+continuation" (idle for a keystroke, next program step for a running
+FOCAL program) - not a case of Nut's 4-level call-stack limit being
+exceeded (that hypothesis, tested earlier, is now understood to have been
+the wrong tree entirely).
+
+**Consequence - LCLS/LCLX redesigned again, more simply than before**:
+since file creation (`CRFLD`) already had to be a one-time keystroke-
+driven setup step (not inside `LCLS`), and `SEEKPTA`/`RCLPTA` turn out to
+be equally unusable from MCODE, the design drops the header-register/
+seek-back approach entirely. `LCLS`/`LCLX` are now pure functions over
+the FOCAL X-register: the caller supplies the current stack size in X,
+each call computes size±4 and calls only `RESZFL` (relying on "current
+file" being persistent OS state that survives across separate `XEQ`
+invocations, not just within one call - a real assumption, not yet
+independently verified but consistent with the design working so far),
+returning the new size in X. No seeking, no ALPHA touch inside
+`LCLS`/`LCLX` at all.
+
+**A second real bug found and fixed along the way**: ending `LCLS`/
+`LCLX` with a bare `rtn` left the display blank - `regPC` settled at the
+normal idle address, so `rtn` did work, but nothing refreshed the
+display with X's new value. Every one of this session's *working*
+examples (the original `mftest.s`, and all the probe modules above)
+ended their top-level completion with `golong ERR110`, never a bare
+`rtn` - switching to that fixed it (confirmed: input value now correctly
+echoes back after `golong ERR110`, e.g. typing `2` and XEQing `LCLS`
+correctly redisplays `2` - the *arithmetic* result is still wrong, see
+below, but the display-refresh mechanism itself is now right).
+
+**Current, still-open bug**: the `+4`/`-4` arithmetic itself doesn't
+take effect - `LCLS(2)` and `LCLS(6)` currently just echo back their
+input unchanged (`2`->`2`, `6`->`6`) instead of `2`->`6`, `6`->`10`.
+Traced this directly: a keystroke-typed value (e.g. "2") reads back via
+this project's own raw `C=DATA` register read (`LoadXIntoC`) with the
+digit sitting at **nibble 12**, but `nutcpu.c`'s own `C=C+1 M`
+implementation (confirmed by reading the C source directly, the `case
+17` handler) applies the `+1` and carries starting at **nibble 3** (field
+M's own `p1`), working upward toward nibble 12. These two positions
+don't match, which is why the increment silently misses the real value
+entirely (it's incrementing an unrelated, currently-zero nibble).
+Working theory, not yet implemented: keystroke digit entry leaves the
+value in a "raw"/left-justified form at nibble 12 that only gets
+normalized into the standard right-justified BCD mantissa (ones digit at
+nibble 3, matching field M's own convention) when read through the OS's
+own `GTINDX` utility (the same one `CRFLD`/`SEEKPTA`/etc. use internally
+to parse their own X argument, confirmed via disassembly much earlier in
+Phase 2 groundwork) - `LoadXIntoC`'s raw read bypasses that normalization
+entirely. `GTINDX` is a base-OS *internal* utility (from `mainframe.h`,
+not a catalog-visible X-Function), so it should be safe to `gosub`
+directly without the ALPHA-abandonment problem above - this needs
+verifying, then wiring in, before the arithmetic will work.

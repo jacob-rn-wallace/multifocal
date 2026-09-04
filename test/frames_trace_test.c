@@ -81,10 +81,11 @@ static void type_byte_traced(int c, int max_steps) {
         int pc = regPC;
         int page = (pc >> 12) & 0xF;
         if (page != last_page) {
-            printf("-- page transition: now page %d (PC=%04X) at step %d --\n", page, pc, i);
+            printf("-- page transition: now page %d (PC=%04X) at step %d -- retstk=[%04X,%04X,%04X,%04X]\n",
+                   page, pc, i, retstk[0], retstk[1], retstk[2], retstk[3]);
             last_page = page;
         }
-        if (page == 8) {
+        if (page == 8 || page == 5) {
             int codes[2] = { fetch_word(pc), fetch_word(pc + 1) };
             char ligne[128] = {0};
             (void)desas(pc, codes, ligne);
@@ -119,10 +120,11 @@ int main(void) {
     type_byte(0x18); type_byte(0x01); type_str("CRFLD"); type_byte(0x01);
     printf("setup CRFLD(MFSTK,2): display=\"%s\"\n", display_to_buf(dispbuf));
 
+    type_str("2");
     type_byte(0x18); /* XEQ */
     type_byte(0x01); /* ALPHA */
     type_str("LCLS");
-    printf("=== tracing closing ALPHA that executes LCLS ===\n");
+    printf("=== tracing closing ALPHA that executes LCLS(2) ===\n");
     type_byte_traced(0x01, 200000);
 
     printf("after LCLS trace: display=\"%s\" regPC=0x%04x\n", display_to_buf(dispbuf), regPC);
