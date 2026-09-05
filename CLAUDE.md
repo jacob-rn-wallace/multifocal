@@ -1462,3 +1462,132 @@ remaining, explicitly out-of-scope items are catalog/`CAT`-listing
 display differences (not an execution-behavior question) and the
 CV+82180A real-hardware question, which is a separate, still-untouched
 undertaking.
+
+## Real HP-41CV+82180A boot config: major progress, one real
+architectural gap confirmed (2026-09-05)
+
+The user has the real HP-41CV hardware on hand but currently no way to
+load software onto it (no EPROM burner/TULIP4041 yet) - real-hardware
+testing is blocked on that, separately from anything code-side. But
+the user *sourced a real 82180A.MOD* (placed in `~/soynut/roms/`),
+making genuine emulated verification of the actual real-hardware
+target possible for the first time - the direct verification Phase 1
+flagged as needed back at the very start of this project.
+
+**The ROM is confirmed genuine**: `modtool --summary` on
+`~/soynut/roms/82180A.MOD` shows XROM 25 "Extended Functions/Memory
+Module" (HP's real part number 82180A) with exactly the expected
+function set - `CRFLD`, `SEEKPTA`, `RCLPTA`, `GETX`, `SAVEX`, `GETRX`,
+`SAVERX`, and the rest this project has used against the CX's built-in
+`CXFUNS` ROM since Phase 2. Single page (`rom_82180a_p0`), MOD1 header
+declares `Page=Any` (genuinely port-pluggable, not fixed to one slot -
+consistent with the port-pluggable design decision already on record).
+
+**Integration, mirroring existing conventions**: a new top-level
+Makefile target (`cv82180a-roms`) converts the MOD file via soynut's
+`mod_to_c.py` (MOD1-aware, unlike `rom_to_c.py`) into
+`build/e82180a_rom.c`. Reuses soynut's own `nut_boot()`
+(`firmware/emu41gcc_compat/nut_rom.c` - its own doc comment already
+calls it "the base HP-41CV OS ROM", backed by soynut's own already-
+built `roms/rom_images.c`) for the base OS, rather than duplicating it -
+a cleaner fit than the `nut_boot_cx()` pattern used for the CX, since
+that function already exists and is already used by
+`phase0_loop_test.c`. New `test/nut_rom_82180a.h`/`.c` wires the module
+ROM in, mirroring `nut_rom_multifocal.c`'s "separate wiring function,
+call after the base boot" pattern.
+
+**A real, well-corroborated finding: Port 1 (page 4) is broken for
+ANY module, not specific to the 82180A.** First attempt wired the
+82180A at page 4 (Port 1, the natural first choice) - cold boot never
+reached "MEMORY LOST" or any stable state; instead the display showed
+a non-monotonic, never-converging pattern involving a `Σ+` annunciator
+and an erratic counter, persisting even after 700,000+ instructions and
+unaffected by a real keypress. A disassembled instruction trace
+(`desas()`, the same disassembler `xm_trace_test.c` already uses)
+showed the base OS polls page 4 within the first handful of cold-boot
+instructions (`GSUBNC 4000` at PC≈0x1AD) - the module's own poll-vector
+code there executes cleanly and returns immediately every single time
+(confirmed: only 3 total accesses into page 4 in a 5000-instruction
+trace, always the identical one-instruction response) - the
+instability is entirely within the *base OS's own* post-poll logic
+(observed directly: `REGN=C` writes to registers 0/1/2 - the T/Z/Y
+stack registers - recurring 50 times in 5000 instructions, consistent
+with a repeating stack-clear/reset cycle that never completes).
+**Decisively ruled out as 82180A-specific**: wiring MultiFOCAL's own,
+already-extensively-verified `frames.mod` at page 4 instead reproduces
+the *identical* failure. This is independently consistent with
+`nut_boot_cx()`'s own comment that "page 4 is not used by this
+configuration at all" for the CX mainframe - two separate pieces of
+evidence agreeing Port 1/page 4 has real, special-purpose early-
+cold-boot significance and is not a safe general-purpose port. **Fix:
+use Port 2 (page 5) instead** - confirmed clean, alone and alongside
+MultiFOCAL's own module at Port 3 (page 6), a genuine two-module
+physical configuration.
+
+**Milestone reached: the real 82180A module provides working XM on a
+plain HP-41CV boot** (`test/cv82180a_smoke_test.c`) - a real
+`CRFLD`/`SEEKPTA`/`SAVEX`/`SEEKPTA`/`GETX` round trip via keystrokes,
+correct on the first clean run once the already-known "always
+`SEEKPTA` right after `CRFLD`" convention (from compatibility testing
+above) was applied here too.
+
+**Bigger milestone: MultiFOCAL's own `LCLS`/`LCLX` frame push/pop
+works correctly on the real target architecture**
+(`test/cv82180a_frames_test.c`) - the exact same 6-step milestone
+(`2→6→10→14→10→6→2`) `frames_test.c` already verified on the CX,
+reproduced identically here. This is the first time any of
+MultiFOCAL's own MCODE has been shown working on anything other than a
+CX - genuinely answering Phase 1's "HP-41CV's XM compatibility is
+genuinely unclear... needs direct verification" question, at least for
+this piece.
+
+**A real, previously-flagged-but-never-actually-tested architectural
+gap, now confirmed**: `LSTO`/`LRCL` do **NOT** work on this
+configuration (`test/cv82180a_lsto_lrcl_test.c`, currently failing,
+not yet fixed or committed as a passing test) - `LRCL` reads back
+stale/wrong values (the seek-target digit, never the actually-stored
+value) instead of erroring outright. **Root cause, confirmed by
+reading `src/frames.s` directly**: `Lsto`/`Lrcl` call `gosub SAVEX` /
+`gosub REALGETX`, and both symbols come from `#include
+"mainframe_cx.h"` - **fixed, hardcoded CX-mainframe addresses** (page
+3). This is *exactly* the risk Phase 2 groundwork explicitly flagged
+before any MCODE was even written: "On a base HP-41C + the 82180A
+module, the identical functions live in a plug-in module at a port-
+dependent address - a hardcoded GOSUB to `mainframe_cx.h`'s address...
+would be silently wrong on that configuration." That warning was
+heeded for `CRFLD` (dispatched via real keystrokes, never `gosub`'d) -
+but `LSTO`/`LRCL`'s own internal `SAVEX`/`REALGETX` calls, added later
+in Phase 3, silently reintroduced the exact same class of risk, and it
+went undetected because Phase 3's own verification never ran against
+anything but a CX. Confirmed directly: address `0x3805`/`0x380B` sit
+in page 3, which is genuinely unpopulated in this CV+82180A config
+(never wired in any of these tests) - `gosub`ing there jumps into
+empty ROM (reads as zero words), executing something inert rather than
+the real routine, which is exactly the "silently wrong," not crashing,
+symptom observed. **The real fix** (not yet implemented): dispatch to
+`SAVEX`/`GETX` by their XROM number (`25,41` and `25,23` respectively,
+per `modtool --summary`'s own output above) rather than a hardcoded
+absolute address - the portable, "ordinary cross-module call"
+mechanism the original kickoff brief and Phase 2 groundwork both
+already anticipated as the correct approach, still not yet actually
+implemented anywhere in this codebase. `LCLS`/`LCLX` were never
+exposed to this risk at all (confirmed, again, in this session): they
+never call `SAVEX`/`GETX`/any mainframe-fixed address - pure X-register
+arithmetic - which is exactly why they passed cleanly on the first try
+here while `LSTO`/`LRCL` did not.
+
+**Honest scope of what's verified vs. not, as of this checkpoint**:
+- Verified, real, working: the sourced ROM's authenticity; the CV+
+  82180A boot config (once page 4 is avoided); `LCLS`/`LCLX` on the
+  real target architecture.
+- Confirmed broken, root-caused, not yet fixed: `LSTO`/`LRCL`'s
+  hardcoded-CX-address `gosub` calls. `LRST` almost certainly has the
+  same exposure as `LCLS`/`LCLX` (pure arithmetic, no XM calls) but
+  hasn't been independently re-verified against this config yet.
+- Not yet attempted: fixing `LSTO`/`LRCL` to use portable XROM
+  dispatch, then re-verifying both this config AND the CX config still
+  pass (a real regression risk if the fix is wrong, since the CX
+  config depends on `LSTO`/`LRCL` too).
+- Real hardware itself remains untested - the user has no deployment
+  path (EPROM burner/TULIP4041) yet; everything above is emulated
+  verification only, using the user's own legitimately-sourced ROM.
