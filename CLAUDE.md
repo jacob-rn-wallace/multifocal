@@ -1363,34 +1363,68 @@ combinations, all correct):
   entry, despite the display no longer looking like an obvious
   mid-entry state in every case).
 
-**GTO was NOT found this pass, despite real effort - honestly
-reported, not glossed over**:
-- Unlike STO/RCL (and the already-known `XEQ`), GTO does not spell its
-  own name on the display when pressed in plain calculator mode - a
-  full 0x00-0xFF scan for a `"G T O"` prompt spelling (the same method
-  that found STO/RCL) found nothing.
-- A program-branch test was attempted (`PRGM` mode, a 4-line program
-  where line 2 is `candidate + ".004"`, hoping a real GTO would jump
-  to line 4 and skip line 3) - found and fixed a real design flaw along
-  the way (exiting `PRGM` mode leaves the pointer at the **last keyed
-  step**, not line 2 as first assumed - confirmed by adding explicit
-  `BST` back-stepping before running), but even corrected, the results
-  were inconclusive: several candidates - including the now-confirmed
-  `STO`/`RCL` themselves - share a similar "consumes some digits,
-  leaves 9 in X" display side effect from this specific test's exact
-  keystroke sequence, so it isn't uniquely diagnostic of GTO.
-  Candidates `0xd0`/`0xd6` showed `"NONEXISTENT"` (a genuine
-  target-not-found error, the same class of error real `XEQ` gave with
-  this test's `".004"` argument) - a real lead, not yet followed up.
-- **Consequence**: `LBL` (SHIFT+GTO, matching the confirmed real
-  BST=SHIFT+SST two-code pattern) is also still unknown, since it
-  depends on GTO's own code. A genuinely complete, literal "real stored
-  FOCAL program with STO/RCL/GTO/LBL" compatibility test is still
-  blocked on this one remaining piece.
+**GTO and LBL found in a follow-up session, continuing from the
+`0xd0`/`0xd6` lead above.** The first pass's methods (a plain-
+calculator-mode name-spelling scan, and an inconclusive program-branch
+test) both had real gaps, closed here:
 
-**Net effect on the original tooling-gap question**: substantially
-narrowed, not fully closed. STO/RCL are real, confirmed, permanent
-capabilities now (`test/hp41_raw_keys.h`, `test/sto_rcl_test.c`) -
-enough to store and recall register values in a genuine stored FOCAL
-program. GTO/LBL (needed for branching/labels) remain open, with a
-real lead (`0xd0`/`0xd6`) not yet chased down.
+- **The plain-mode name-spelling scan was the wrong context.** GTO
+  does not spell its own name when pressed in ordinary calculator mode
+  (confirmed: a full rescan of that exact context still finds nothing) -
+  but it DOES spell itself out while a program is being **recorded**
+  (`PRGM` mode), a context the first pass's scan never tried. Rerunning
+  the "key `1`, then candidate" scan with `PRGM` mode on turned up real
+  function names all over the place that the plain-mode scan had
+  missed entirely (`SQRT`, `LN`, `SIN`, `COS`, `TAN`, `1/X`, `X<>Y`,
+  `ENTER^`, and - the actual target - `"0 2   G T O   1 3"` at
+  candidate **`0xd6`**.
+- **A second real discovery along the way, needed to even interpret
+  that result correctly**: typing several digits in a row while
+  recording does NOT create one program line per digit - they merge
+  into a single numeric-literal line (confirmed directly: keying
+  `1`,`2`,`3` in sequence recorded as ONE line, `"01   1 2 3"`, not
+  three). Multiple digits only split into separate lines when a
+  non-digit keystroke (a real key like `ENTER^`) intervenes. This
+  invalidated the first pass's whole line-counting assumption for its
+  program-branch test - not a fault in the idea of that test, just a
+  wrong model of what it was actually building.
+- **GTO's own argument-entry behavior is genuinely different from
+  STO/RCL's, which is why the "13" surprised us**: pressing GTO while
+  recording commits IMMEDIATELY, with a default target already filled
+  in (here, `13`) - it does NOT open an interactive digit-entry window
+  the way STO/RCL do (confirmed directly: typing digits or `.NNN`
+  right after GTO starts a **new, separate** program line instead of
+  modifying GTO's own target; pre-loading X beforehand doesn't change
+  the default either - `13` is a fixed recording-time UI default,
+  unrelated to X). This is a real, useful finding in its own right,
+  not just a workaround: **rather than fight the default, the
+  confirming test uses it as-is** and places a matching target there.
+- **Decisive, positive confirmation, not just a name coincidence**: a
+  program `"1, GTO 13, 5, +, LBL 13"` (LBL = SHIFT+STO, see below),
+  run from the top, leaves X=1 - the `5,+` arithmetic between the GTO
+  and its target is completely skipped. The negative control already
+  existed from the first pass: the exact same `GTO 13` with no matching
+  `LBL 13` anywhere in the program produces a real `"NONEXISTENT"`
+  error when executed (traced via `SST`, not just inferred) - i.e.
+  GTO's behavior is genuinely target-sensitive, not a fixed no-op that
+  happens to look like success. Checked in as `test/gto_lbl_test.c`.
+- **LBL = SHIFT+STO, not SHIFT+GTO** - a real, corrected assumption.
+  The `BST`=SHIFT+SST pattern suggested trying SHIFT+GTO first; that
+  produced a plain digit instead (confirming shift doesn't uniformly
+  reuse the same code for every key - `BST` is a documented special
+  case, not the general rule). The real answer was found the same way
+  GTO itself was: rerunning the PRGM-mode name-spelling scan with
+  `SHIFT` held before each candidate turned up a real `"L B L  _ _"`
+  prompt at **three separate codes** (`0x22`/`0x52`/`0x72` - electrical
+  key-matrix aliases of the same logical key) - `0x52` among them is
+  the already-confirmed `STO`, a clean three-way agreement.
+
+**Net effect on the original tooling-gap question: fully closed for
+STO/RCL/GTO/LBL.** All four are real, confirmed, permanent
+capabilities now (`test/hp41_raw_keys.h`, `test/sto_rcl_test.c`,
+`test/gto_lbl_test.c`) - enough to build a genuine stored FOCAL program
+with storage, recall, and branching. What a literal "real stored FOCAL
+program" compatibility test would still need beyond this (arithmetic,
+`ENTER^`, and digit entry were already usable via plain `tabcode[]`
+characters) is mostly just assembling these primitives into an actual
+test - not blocked on any further keycode discovery.
