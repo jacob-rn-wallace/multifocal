@@ -1046,6 +1046,15 @@ here**: `Lsto`/`Lrcl` had to be inserted *before* `Padding` in the
 `.fat` list, per the Phase 2 "last `.fat` entry never dispatches"
 finding - `Padding` must always stay last.
 
+**Closed out Phase 1's own deferred naming-collision check** before
+tagging: Phase 1's tag message explicitly left "LCLS/LCLX/LSTO/LRCL
+naming... deferred to Phase 3, checked against the `.modexport`
+name-collision data... before anything is finalized." Grepped all 55
+real module `.modexport` files (`toolchain/calypsi-nut-5.18/module-
+export/`) for exact-name matches (case-insensitive) against `LCLS`,
+`LCLX`, `LSTO`, `LRCL`, `MFSTK`, and `MFPAD` - **zero collisions**.
+Names are final as used.
+
 **Real, honest scope limits of what Phase 3 has NOT solved**:
 - `LSTO`/`LRCL` do not embed a slot number themselves (unlike real
   `STO 00`-`STO 15`) - the calling FOCAL program computes the absolute
@@ -1065,5 +1074,4 @@ finding - `Padding` must always stay last.
 - Compatibility (native FOCAL programs unaffected by MultiFOCAL's
   presence) is still untested, unchanged from the Phase 2 tag's own
   scope note.
-- Not yet tagged - this is a milestone within Phase 3, not a
-  Phase-3-complete claim.
+**Phase 3 is now tagged complete** (`phase-3`).
