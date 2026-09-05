@@ -13,8 +13,8 @@
  * every intermediate display plus a final raw dump of the CX's 128
  * built-in XM registers (espaceRAM[64*8..192*8), the same region
  * xm_probe_test.c/resz_probe_test.c already inspect this way) to
- * stdout. None of these operations ever reference LCLS/LCLX/LSTO/LRCL/
- * LRST/MFSTK by name.
+ * stdout. None of these operations ever reference LCLS/LCLX/LRST/
+ * MFSTK by name.
  *
  * Takes one argument: "with" loads MultiFOCAL's own module at page 8
  * exactly like every other test in this suite; any other value (or no

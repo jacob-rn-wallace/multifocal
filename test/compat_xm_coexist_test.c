@@ -8,12 +8,16 @@
  * real compatibility risk, specific to this project's own design, is
  * the one Phase 2 groundwork flagged from the start (see CLAUDE.md):
  * "current file + pointer" is global HP-41CX OS state, not scoped to
- * any one caller. LSTO/LRCL (unlike the pure-arithmetic LCLS/LCLX) DO
- * touch XM via SAVEX/REALGETX against whatever file is currently
- * seeked. If a native FOCAL program has its own XM file open and a
- * subroutine call in between uses LSTO/LRCL (making MFSTK briefly
- * "current"), does the native program's own file survive completely
- * intact once it reseeks back to its own file?
+ * any one caller. Local-variable slot access (unlike the pure-
+ * arithmetic LCLS/LCLX) DOES touch XM via SAVEX/GETX against whatever
+ * file is currently seeked - originally through MultiFOCAL's own
+ * LSTO/LRCL wrappers, now retired in favor of calling SAVEX/GETX
+ * directly (see src/frames.s's "PHASE 3, then RETIRED" comment) -
+ * either way, the same real risk applies. If a native FOCAL program
+ * has its own XM file open and a subroutine call in between accesses a
+ * local-variable slot (making MFSTK briefly "current"), does the
+ * native program's own file survive completely intact once it reseeks
+ * back to its own file?
  *
  * Deliberately does NOT hardcode the specific numeric values read back
  * from XM into an assertion, even though they're now well understood
@@ -24,7 +28,7 @@
  * Instead this test is self-referential: it reads the native file's
  * contents via a SEEKPTA+GETX sequence TWICE - once right after
  * writing it (the "baseline"), and once again after a full round of
- * MultiFOCAL activity (CRFLD MFSTK, 3x LCLS, a seek, 2x LSTO, 3x LCLX)
+ * MultiFOCAL activity (CRFLD MFSTK, 3x LCLS, a seek, 2x SAVEX, 3x LCLX)
  * has made MFSTK "current" in between. Both read passes go through the
  * identical sequence, so if MultiFOCAL's own operations left the
  * native file untouched, the two passes must produce byte-for-byte
@@ -133,9 +137,9 @@ int main(void) {
     printf("after 3x LCLS: size=%d (expect 14)\n", size);
 
     seek_file("MFSTK", 3);
-    type_str("55"); xeq("LSTO");
-    type_str("56"); xeq("LSTO");
-    printf("LSTO(55), LSTO(56) into MFSTK frame1 done\n");
+    type_str("55"); xeq("SAVEX");
+    type_str("56"); xeq("SAVEX");
+    printf("SAVEX(55), SAVEX(56) into MFSTK frame1 done\n");
 
     pop_lclx(&size); pop_lclx(&size); pop_lclx(&size);
     printf("after 3x LCLX: size=%d (expect 2)\n", size);
@@ -158,7 +162,7 @@ int main(void) {
 
     if (fails == 0) {
         printf("PASS: NATIVE's own XM file reads back identically before and "
-               "after a full round of MultiFOCAL activity (CRFLD/LCLS/LSTO/"
+               "after a full round of MultiFOCAL activity (CRFLD/LCLS/SAVEX/"
                "LCLX) made MFSTK the OS's \"current\" file in between - "
                "MultiFOCAL's XM usage does not corrupt an independent "
                "native file.\n");

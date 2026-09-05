@@ -107,23 +107,15 @@
               .fat    Header
               .fat    Lcls
               .fat    Lclx
-              .fat    Lsto
-              .fat    Lrcl
               .fat    Lrst
               .fat    Padding
 FatEnd:       .con    0,0
 
 #include "mainframe.h"
-#include "mainframe_cx.h"
-;;; mainframe.h ALREADY defines its own "GETX" (0x1CEF - confirmed via
-;;; a "duplicate symbol" assembler error when this was first tried) -
-;;; an unrelated base-OS routine that happens to share the name by
-;;; coincidence, NOT the real XM single-register read primitive. The
-;;; real one (disassembly-confirmed: shares a body with SAVEX below,
-;;; gated by ST bit 7, ending in a real RTN) lives at 0x380B and has no
-;;; entry in mainframe_cx.h at all - a real gap in Calypsi's header,
-;;; not an oversight here. Named distinctly to avoid the collision.
-REALGETX      .equlab 0x380B
+;;; mainframe_cx.h is deliberately NOT included here - see the "LSTO/
+;;; LRCL retired" section below for why: this module now makes no
+;;; hardcoded-address gosub calls into any CX-mainframe-specific
+;;; routine at all, on purpose, for real hardware portability.
 
               .name   "MULTIFOCAL PHASE2"
 Header:       rtn
@@ -238,13 +230,57 @@ Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
 LclxEmpty:    sethex                ; same reasoning as LclsFull above
               golong  ERR110        ; X is left unchanged - the pop was refused (already empty)
 
-;;; PHASE 3: local-variable read/write within the CURRENT (innermost)
-;;; frame. Calling convention, verified end to end this phase (see
-;;; CLAUDE.md's Phase 3 section for the full probe history):
+;;; PHASE 3, then RETIRED (2026-09-05): local-variable read/write
+;;; within the CURRENT (innermost) frame. Originally implemented as
+;;; this module's own LSTO/LRCL functions (thin gosub wrappers around
+;;; the real SAVEX/GETX primitives); removed once real HP-41CV+82180A
+;;; testing confirmed a real, project-ending-for-this-approach bug -
+;;; see CLAUDE.md's "Real HP-41CV+82180A boot config" section for the
+;;; full story, condensed here:
 ;;;
-;;; MFSTK must be allocated at size 35, not 34 - one MORE than the
-;;; depth-ceiling arithmetic's own 34 (see Lcls/Lclx above). This is
-;;; NOT a change to the depth ceiling itself (still 8 frames x 4 +
+;;; LSTO/LRCL's own bodies called SAVEX/GETX via `gosub` to a HARDCODED
+;;; ADDRESS from mainframe_cx.h - correct only because those routines
+;;; happen to live at that fixed address inside the CX's own built-in
+;;; mainframe ROM. On a base HP-41C/CV with the real, port-pluggable
+;;; 82180A module providing XM instead, those same routines live inside
+;;; the 82180A's own ROM page - wherever the user happens to have it
+;;; plugged in, not at the CX's fixed address. LCLS/LCLX/LRST (pure
+;;; X-register arithmetic, no SAVEX/GETX calls at all) were never
+;;; exposed to this and passed cleanly on first try against a real
+;;; CV+82180A boot config; LSTO/LRCL failed identically every time
+;;; (silently reading back stale values, not even erroring) - confirmed
+;;; by reading the disassembled addresses directly: they landed in a
+;;; page that's genuinely unpopulated on that configuration, so the
+;;; `gosub` executed inert, uninitialized ROM instead of the real
+;;; routine.
+;;;
+;;; Retiring LSTO/LRCL costs nothing functionally - by design, they
+;;; never embedded a slot number or computed the target register
+;;; themselves (that was always the calling FOCAL program's own job -
+;;; see the calling convention below), so they were pure pass-throughs
+;;; with no logic of their own beyond a corruption-bug workaround (see
+;;; below) that a real catalog dispatch doesn't even need. The
+;;; replacement calling convention is simpler, not just safer: use the
+;;; real SAVEX/GETX directly, by name, exactly like CRFLD/SEEKPTA
+;;; already have to be - real FOCAL-program-level keystrokes, dispatched
+;;; through the OS's own catalog search (which resolves to whichever
+;;; page the XM-providing module actually occupies, on ANY hardware
+;;; configuration), never a MultiFOCAL-internal `gosub` to a fixed
+;;; address:
+;;;   "MFSTK"  <target register>  XEQ SEEKPTA  (real keystroke/program step)
+;;;   <value>  XEQ SAVEX                        (or XEQ GETX to read)
+;;; where <target register> = (current LCLS/LCLX size) - 3 + <slot 0-3>.
+;;; Consecutive accesses to increasing slots need only ONE seek (GETX/
+;;; SAVEX auto-advance the pointer - confirmed via a real sequential-
+;;; write-then-sequential-read test, see CLAUDE.md); accessing a
+;;; DIFFERENT, non-next register always needs a fresh SEEKPTA. This is
+;;; a real, inherent HP-41 XM constraint (SEEKPTA is architecturally a
+;;; FOCAL-program-level operation, not a subroutine primitive), not a
+;;; gap unique to this design.
+;;;
+;;; MFSTK must still be allocated at size 35, not 34 - one MORE than
+;;; the depth-ceiling arithmetic's own 34 (see Lcls/Lclx above). This
+;;; is NOT a change to the depth ceiling itself (still 8 frames x 4 +
 ;;; header 2 = 34 *logical* registers) - it works around a separate,
 ;;; confirmed real HP-41CX bug: SEEKPTA to a file's own LAST register
 ;;; always fails with "END OF FL", regardless of file size (confirmed
@@ -254,60 +290,19 @@ LclxEmpty:    sethex                ; same reasoning as LclsFull above
 ;;; OTHER end of a degenerate 1-register file). Register 35 is
 ;;; permanent, deliberate padding - never written, never read - so
 ;;; that register 34 (the real deepest local-variable slot) is never
-;;; the file's actual last register.
+;;; the file's actual last register. This constraint is unrelated to
+;;; LSTO/LRCL's own retirement and remains fully in force for direct
+;;; SAVEX/GETX use.
 ;;;
-;;; Because SEEKPTA/SEEKPT (both, empirically confirmed - see CLAUDE.md)
-;;; abandon their caller when called via raw "gosub" exactly like
-;;; SEEKPTA/RCLPTA/CRFLD do, LSTO/LRCL cannot seek themselves. The
-;;; CALLING FOCAL PROGRAM must position the pointer itself, as an
-;;; ordinary real FOCAL program step, immediately before each LSTO/LRCL:
-;;;   "MFSTK"  <target register>  XEQ SEEKPTA  (real keystroke/program step)
-;;;   <value>  XEQ LSTO                         (or XEQ LRCL to read)
-;;; where <target register> = (current LCLS/LCLX size) - 3 + <slot 0-3>.
-;;; Consecutive accesses to increasing slots need only ONE seek (GETX/
-;;; SAVEX auto-advance the pointer - confirmed via a real sequential-
-;;; write-then-sequential-read test, see CLAUDE.md); accessing a
-;;; DIFFERENT, non-next register always needs a fresh SEEKPTA. This is
-;;; a real, inherent HP-41 XM constraint (SEEKPTA is architecturally a
-;;; FOCAL-program-level operation, not a subroutine primitive), not a
-;;; gap unique to this design - it is why the "LSTO n" embedded-literal-
-;;; slot ergonomics real STO/RCL enjoy is explicitly deferred, not
-;;; solved here.
+;;; The corruption bug that drove LSTO's own asymmetric completion
+;;; path (a real, confirmed bug: "gosub SAVEX" followed by "golong
+;;; ERR110" corrupted the OS's file-directory lookup, breaking the
+;;; caller's very next SEEKPTA - but real catalog-dispatched XEQ SAVEX
+;;; was independently confirmed NOT to have this problem) is now
+;;; entirely moot: a real XEQ SAVEX from the calling FOCAL program
+;;; completes normally, with normal visible feedback, matching every
+;;; other real X-Function - no workaround needed at all.
 ;;;
-;;; A REAL, CONFIRMED BUG drives LSTO's asymmetry with every other
-;;; function in this module: "gosub SAVEX" (write) followed by "golong
-;;; ERR110" corrupts the OS's file-directory lookup, breaking the
-;;; CALLER'S very next real SEEKPTA with a spurious "FL NOT FOUND" -
-;;; even though SAVEX itself completes correctly and returns normally
-;;; (confirmed via a battery of isolated probes: real catalog-dispatched
-;;; SAVEX is fine; "gosub SAVEX; rtn" is fine, byte-for-byte, confirmed
-;;; via independent real GETX reads afterward at every register
-;;; including the file's actual last one; "gosub REALGETX; golong
-;;; ERR110" - the read path - is also fine. Attempted fixes that did
-;;; NOT work, for the record: clearing ST bit 7 after SAVEX, "gosub
-;;; ERRSUB" before SAVEX - both instead broke the CURRENT call. The
-;;; true root cause inside ERR110's own file-name-aware display code
-;;; was not pinned down at the instruction level, matching the earlier
-;;; unresolved RESZFL/ERR110 hang from Phase 2 in spirit). Consequence:
-;;; LSTO ends with a bare "rtn", not "golong ERR110" - it does NOT
-;;; refresh the display (X is left showing whatever it already was),
-;;; the same kind of "no visible feedback" tradeoff this module already
-;;; accepted for LCLS/LCLX's own silent-refusal path.
-              .name   "LSTO"
-;;; X in: value to store. Writes X into whichever XM register the
-;;; pointer currently sits at (see the calling convention above - the
-;;; caller must SEEKPTA first). X is left unchanged (SAVEX's own
-;;; convention - matches real STO semantics, which also don't touch X).
-Lsto:         gosub   SAVEX
-              rtn
-
-              .name   "LRCL"
-;;; Reads the current XM register (same SEEKPTA precondition as LSTO)
-;;; into X. Unlike LSTO, safe to complete via golong ERR110 - only the
-;;; SAVEX/write path was found to corrupt file-directory state.
-Lrcl:         gosub   REALGETX
-              golong  ERR110
-
 ;;; PHASE 4: recovery from an orphaned frame after abrupt exit. LCLS/
 ;;; LCLX are pure X-in/X-out functions (see above) - the "current
 ;;; logical stack size" they thread through X has to be held somewhere

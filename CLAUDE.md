@@ -1591,3 +1591,81 @@ here while `LSTO`/`LRCL` did not.
 - Real hardware itself remains untested - the user has no deployment
   path (EPROM burner/TULIP4041) yet; everything above is emulated
   verification only, using the user's own legitimately-sourced ROM.
+
+## LSTO/LRCL retired; local-variable access now uses SAVEX/GETX
+directly (2026-09-05)
+
+Closes the gap from the section above, at the user's direction after
+weighing two alternatives (a self-contained FAT-table scanner inside
+`LSTO`/`LRCL` themselves, vs. continuing to reverse-engineer
+`mainframe.h`'s `XROM`/`XROMNF` utility at `0x2FAF`/`0x2F6C` -
+disassembled partway but genuinely inconclusive: Calypsi's own RPN-
+compiler docs confirm "XROM rn,fn" is fundamentally a FOCAL *program-
+step* encoding the interpreter consumes, not a simple MCODE-callable
+subroutine with an obvious register convention, so fully understanding
+it safely looked like its own multi-session investigation).
+
+**The decision, and why it costs nothing functionally**: `LSTO`/`LRCL`
+never embedded a slot number or computed the target register
+themselves - by design, that was always the calling FOCAL program's
+own job (`SEEKPTA` first, always). They were pure `gosub` pass-throughs
+to `SAVEX`/`GETX` with no logic of their own beyond a corruption-bug
+workaround (`LSTO`'s bare `rtn` instead of `golong ERR110`) that a real
+catalog dispatch doesn't even need - already confirmed back in Phase 3:
+real `XEQ SAVEX` has no corruption issue, only `gosub SAVEX; golong
+ERR110` did. So retiring them and having the calling program use the
+real `SAVEX`/`GETX` directly is not a workaround or a downgrade - it's
+simpler (one fewer name to learn), fixes a real limitation (`LSTO`'s
+suppressed display refresh goes away, since real `XEQ SAVEX` completes
+normally with visible feedback), and is portable by construction
+(ordinary catalog dispatch resolves to whichever page actually holds
+the XM-providing module, on any hardware). The one real cost: Phase 3's
+own deferred "slot-literal ergonomics" idea (`LSTO0`-`LSTO3` embedding
+the register offset) depended on `LSTO`/`LRCL` existing as MultiFOCAL's
+own functions to build on - if ever revisited, it needs a different
+design now.
+
+**Implementation** (`src/frames.s`): removed the `Lsto`/`Lrcl` FAT
+entries and bodies entirely (list is now `Header, Lcls, Lclx, Lrst,
+Padding`), removed the now-unused `REALGETX` equlab, and removed the
+`#include "mainframe_cx.h"` line - **this module now makes zero
+hardcoded-address `gosub` calls into any CX-mainframe-specific routine
+at all**, the real portability property the whole exercise was after.
+The Phase 3 header comment block was rewritten in place (not deleted)
+to explain the retirement and preserve the parts that are still true
+and load-bearing for direct `SAVEX`/`GETX` use: the size-35 `MFSTK`
+requirement (the last-register `SEEKPTA` bug is unrelated to `LSTO`/
+`LRCL` and still applies), and the "caller must `SEEKPTA` first, real
+FOCAL step, never `gosub`'d" calling convention - now illustrated with
+`XEQ SAVEX`/`XEQ GETX` directly instead of `XEQ LSTO`/`XEQ LRCL`.
+
+**Verification, both configurations, all green**:
+- CX: `test/local_slot_access_test.c` (renamed from `lsto_lrcl_test.c`,
+  same 8-frame depth-ceiling coverage, `xeq("LSTO")`/`xeq("LRCL")`
+  replaced with `xeq("SAVEX")`/`xeq("GETX")`) - PASS, byte-identical
+  results to the original.
+- CV+82180A: `test/cv82180a_local_slot_test.c` (renamed from
+  `cv82180a_lsto_lrcl_test.c`, which had been left uncommitted as a
+  known-failing test documenting the bug) - **now PASSES**, confirming
+  the retirement genuinely fixes the real-target compatibility problem,
+  not just removes the symptom.
+- `test/compat_xm_coexist_test.c` (compatibility Test 2) updated the
+  same way (its "MultiFOCAL activity" step used `LSTO`, now `SAVEX`) -
+  still PASSES.
+- All other suites (`frames_test`, `frames_bounds_test`,
+  `frames_lrst_test`, `gto_lbl_test`, `cv82180a_smoke_test`,
+  `cv82180a_frames_test`, `compat_presence_test`+script,
+  `sto_rcl_test`+script, `compat_native_program_test`+script) re-run
+  and still pass - no regressions from removing two FAT entries.
+
+**Current, correct status** (supersedes the "confirmed broken, not yet
+fixed" checkpoint above): `LSTO`/`LRCL` no longer exist. Local-variable
+storage/recall is `XEQ SAVEX`/`XEQ GETX` directly, preceded by the same
+`SEEKPTA` step as before. Both the CX and the real CV+82180A
+architecture are verified working with this convention. `LRST` was
+also independently verified against the CV+82180A config
+(`test/cv82180a_lrst_test.c`) - PASS, confirming the inference (it
+shares `LCLS`/`LCLX`'s exact code pattern, no `SAVEX`/`GETX`/any
+mainframe-fixed address at all) with an actual test result, not just
+code inspection. Every one of `LCLS`/`LCLX`/`LRST`/local-slot access
+now has dedicated CV+82180A test coverage.

@@ -1,32 +1,23 @@
 /**
- * @file lsto_lrcl_test.c
- * @brief Phase 3 milestone: LSTO/LRCL local-variable read/write.
+ * @file local_slot_access_test.c
+ * @brief Local-variable read/write within a pushed frame - replaces
+ *        the retired LSTO/LRCL (see src/frames.s's "PHASE 3, then
+ *        RETIRED" comment and CLAUDE.md's "Real HP-41CV+82180A boot
+ *        config" section for why): the calling FOCAL program now uses
+ *        the real SAVEX/GETX primitives directly, by name, instead of
+ *        MultiFOCAL-specific wrapper functions - the same discipline
+ *        CRFLD/SEEKPTA already required, and portable to any hardware
+ *        configuration since it's ordinary catalog dispatch, never a
+ *        MultiFOCAL-internal `gosub` to a fixed address.
  *
- * LSTO/LRCL are thin wrappers around the real XM primitives SAVEX/
- * REALGETX (see src/frames.s's header comment for the full design and
- * probe history). Neither can seek itself - SEEKPTA/SEEKPT both
- * abandon their caller when gosub'd directly from custom MCODE, just
- * like CRFLD/RCLPTA do - so the CALLING FOCAL PROGRAM must position
- * the pointer itself via a real "ALPHA MFSTK ALPHA; <reg>; XEQ
- * SEEKPTA" step (simulated here via this test's own keystrokes,
- * standing in for what a real calling FOCAL program would do)
- * immediately before each LSTO/LRCL. Consecutive accesses to
- * increasing registers need only one seek (GETX/SAVEX auto-advance);
- * a jump to a different register needs a fresh SEEKPTA.
- *
- * MFSTK must be created at size 35, NOT the depth-ceiling's own 34 -
- * one padding register, to work around a confirmed real HP-41CX bug
- * (SEEKPTA to a file's own last register always fails with "END OF
- * FL", regardless of file size) that would otherwise make register 34
- * - the deepest real local-variable slot - permanently unreachable.
- *
- * This test pushes all the way to the depth ceiling (8 nested frames,
- * size 2->34), stores distinct values into every slot of the shallowest
- * (frame 1, registers 3-6) and deepest (frame 8, registers 31-34 -
- * including the file's actual last usable register) frames - the
- * deepest write done out of sequential order to also confirm a
- * fresh SEEKPTA correctly repositions - then reads every one of those
- * 8 values back via LRCL and confirms it round-trips correctly, before
+ * Exercises exactly the same milestone the old lsto_lrcl_test.c did,
+ * with SAVEX/GETX in place of LSTO/LRCL: pushes all 8 frames to the
+ * depth ceiling (size 2->34), stores distinct values into every slot
+ * of the shallowest (frame 1, registers 3-6) and deepest (frame 8,
+ * registers 31-34 - including the file's actual last usable register)
+ * frames - the deepest write done out of sequential order to also
+ * confirm a fresh SEEKPTA correctly repositions - then reads every one
+ * of those 8 values back and confirms it round-trips correctly, before
  * popping all 8 frames back via LCLX.
  */
 #include <stdbool.h>
@@ -91,7 +82,7 @@ int main(void) {
     if (size != 34) fails++;
 
     /* Frame 1 occupies registers 3-6 (base = size_after_push1 - 3 = 3).
-     * Store 4 distinct values sequentially (one seek, then 4 LSTOs
+     * Store 4 distinct values sequentially (one seek, then 4 SAVEXs
      * relying on auto-advance). */
     int frame1_vals[4] = {11, 12, 13, 14};
     seek(3);
@@ -99,27 +90,28 @@ int main(void) {
         char buf[8];
         snprintf(buf, sizeof(buf), "%d", frame1_vals[i]);
         type_str(buf);
-        xeq("LSTO");
+        xeq("SAVEX");
     }
-    printf("frame1 (regs 3-6) sequential LSTO done\n");
+    printf("frame1 (regs 3-6) sequential SAVEX done\n");
 
     /* Frame 8 occupies registers 31-34 (base = 34 - 3 = 31) - the
      * deepest frame, register 34 is the file's actual last usable
-     * register. Store out of order to confirm each LSTO's own SEEKPTA
-     * really repositions rather than relying on leftover state. */
-    seek(34); type_str("84"); xeq("LSTO");
-    seek(31); type_str("81"); xeq("LSTO");
-    seek(33); type_str("83"); xeq("LSTO");
-    seek(32); type_str("82"); xeq("LSTO");
-    printf("frame8 (regs 31-34) out-of-order LSTO done\n");
+     * register. Store out of order to confirm each SAVEX's preceding
+     * SEEKPTA really repositions rather than relying on leftover
+     * state. */
+    seek(34); type_str("84"); xeq("SAVEX");
+    seek(31); type_str("81"); xeq("SAVEX");
+    seek(33); type_str("83"); xeq("SAVEX");
+    seek(32); type_str("82"); xeq("SAVEX");
+    printf("frame8 (regs 31-34) out-of-order SAVEX done\n");
 
-    /* Read frame1 back sequentially via LRCL. */
+    /* Read frame1 back sequentially via GETX. */
     seek(3);
     for (int i = 0; i < 4; i++) {
-        xeq("LRCL");
+        xeq("GETX");
         int got = parse_display_int(display_to_buf(dispbuf));
         int expect = frame1_vals[i];
-        printf("frame1 slot%d LRCL -> got=%d (expect %d) %s\n", i, got, expect,
+        printf("frame1 slot%d GETX -> got=%d (expect %d) %s\n", i, got, expect,
                got == expect ? "OK" : "MISMATCH");
         if (got != expect) fails++;
     }
@@ -128,10 +120,10 @@ int main(void) {
     int frame8_checks[4][2] = {{34, 84}, {31, 81}, {33, 83}, {32, 82}};
     for (int i = 0; i < 4; i++) {
         seek(frame8_checks[i][0]);
-        xeq("LRCL");
+        xeq("GETX");
         int got = parse_display_int(display_to_buf(dispbuf));
         int expect = frame8_checks[i][1];
-        printf("frame8 reg%d LRCL -> got=%d (expect %d) %s\n",
+        printf("frame8 reg%d GETX -> got=%d (expect %d) %s\n",
                frame8_checks[i][0], got, expect, got == expect ? "OK" : "MISMATCH");
         if (got != expect) fails++;
     }
@@ -148,9 +140,10 @@ int main(void) {
     if (size != 2) fails++;
 
     if (fails == 0) {
-        printf("PASS: LSTO/LRCL round-trip correctly at both the shallowest "
-               "and deepest (including the file's last usable register) "
-               "frames, in and out of sequential order.\n");
+        printf("PASS: direct SAVEX/GETX round-trip correctly at both the "
+               "shallowest and deepest (including the file's last usable "
+               "register) frames, in and out of sequential order - the "
+               "replacement calling convention for the retired LSTO/LRCL.\n");
         return 0;
     }
     printf("FAIL: %d checks mismatched.\n", fails);
