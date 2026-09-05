@@ -15,19 +15,20 @@
  * "current"), does the native program's own file survive completely
  * intact once it reseeks back to its own file?
  *
- * Deliberately does NOT assert specific numeric values read back from
- * XM (a real, currently-unexplained SAVEX/GETX pointer-arithmetic
- * anomaly was found while building this test suite - see
- * compat_presence_test.c and CLAUDE.md's compatibility-testing
- * section). Instead this test is self-referential: it reads the native
- * file's contents via a SEEKPTA+GETX sequence TWICE - once right after
- * writing it (the "baseline", whatever its actual values turn out to
- * be), and once again after a full round of MultiFOCAL activity (CRFLD
- * MFSTK, 3x LCLS, a seek, 2x LSTO, 3x LCLX) has made MFSTK "current" in
- * between. Whatever the true pointer semantics are, both read passes
- * go through the identical sequence, so if MultiFOCAL's own operations
- * left the native file untouched, the two passes must produce
- * byte-for-byte identical results - this needs no independent
+ * Deliberately does NOT hardcode the specific numeric values read back
+ * from XM into an assertion, even though they're now well understood
+ * (see compat_presence_test.c's header comment for the real, root-
+ * caused explanation of an early false alarm here - a fresh CRFLD does
+ * not leave the pointer ready to write register 1 directly, fixed by
+ * an explicit SEEKPTA right after CRFLD, which this test does too).
+ * Instead this test is self-referential: it reads the native file's
+ * contents via a SEEKPTA+GETX sequence TWICE - once right after
+ * writing it (the "baseline"), and once again after a full round of
+ * MultiFOCAL activity (CRFLD MFSTK, 3x LCLS, a seek, 2x LSTO, 3x LCLX)
+ * has made MFSTK "current" in between. Both read passes go through the
+ * identical sequence, so if MultiFOCAL's own operations left the
+ * native file untouched, the two passes must produce byte-for-byte
+ * identical results - this needs no independent
  * assumption about what "correct" values should be.
  */
 #include <stdbool.h>
@@ -101,11 +102,15 @@ int main(void) {
     if (ret == 1) asleep_state = true;
 
     /* Native program creates and populates its own XM file - no
-     * MultiFOCAL involvement at all yet. */
+     * MultiFOCAL involvement at all yet. A fresh CRFLD does NOT leave
+     * the pointer ready to write register 1 directly (root-caused in
+     * compat_presence_test.c's header comment) - explicit SEEKPTA
+     * first, always. */
     type_byte(0x01); type_str("NATIVE"); type_byte(0x01);
     type_str("8");
     xeq("CRFLD");
     printf("setup CRFLD(NATIVE,8): disp=\"%s\"\n", display_to_buf(dispbuf));
+    seek_file("NATIVE", 1);
     type_str("91"); xeq("SAVEX");
     type_str("92"); xeq("SAVEX");
     type_str("93"); xeq("SAVEX");

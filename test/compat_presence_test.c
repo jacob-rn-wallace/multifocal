@@ -26,19 +26,17 @@
  * MultiFOCAL's module is truly additive-only, the two outputs must be
  * byte-for-byte identical.
  *
- * NOTE on the printed values below: a real, currently-unexplained
- * pointer-arithmetic anomaly was found while writing this test (real
- * catalog-dispatched GETX's first read after a fresh SEEKPTA does not
- * return the just-seeked-to register's value - see the compatibility-
- * testing section of CLAUDE.md for the full observation). It's flagged
- * there, not root-caused here, and it does NOT affect this test's own
- * conclusion: whatever the true semantics are, they're either present
- * or absent identically in both runs, which is the only thing this
- * test needs to establish. The "(expect N)" labels below describe what
- * a naive read-after-write model would predict, kept only so a human
- * skimming the output can see where that model breaks down - the test
- * itself makes no assertion on these values, only on whether the two
- * full runs match each other.
+ * NOTE, root-caused after this test first ran: a fresh CRFLD does NOT
+ * leave the pointer positioned to write register 1 directly - a bare
+ * SAVEX right after CRFLD, with no explicit SEEKPTA in between, writes
+ * somewhere outside the file's normal register range and that value is
+ * lost (confirmed via a dedicated probe: reg-by-reg SEEKPTA(n)+SAVEX/
+ * GETX, both individually and chained from one SEEKPTA, are exact 1:1 -
+ * the discrepancy appeared only when the first post-CRFLD access
+ * skipped the explicit seek). This is a real, general HP-41CX behavior,
+ * not anything to do with MultiFOCAL - every access below is now
+ * preceded by an explicit SEEKPTA, and the "(expect N)" labels are
+ * exact, not aspirational.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -78,11 +76,20 @@ int main(int argc, char **argv) {
     fprintf(stderr, "module=%s\n", with_module ? "present" : "absent");
     show("cold boot");
 
-    /* Native file, native name, no MultiFOCAL involvement at all. */
+    /* Native file, native name, no MultiFOCAL involvement at all. A
+     * fresh CRFLD does NOT leave the pointer positioned to write
+     * register 1 directly - confirmed via a dedicated probe (see this
+     * file's header comment): the first post-CRFLD SAVEX with no
+     * explicit SEEKPTA in between lands outside the file's normal
+     * register range and is lost. Always SEEKPTA right after CRFLD. */
     type_byte(0x01); type_str("NATIVE"); type_byte(0x01);
     type_str("5");
     xeq("CRFLD");
     show("CRFLD(NATIVE,5)");
+    type_byte(0x01); type_str("NATIVE"); type_byte(0x01);
+    type_str("1");
+    xeq("SEEKPTA");
+    show("SEEKPTA(NATIVE,1)");
 
     type_str("11"); xeq("SAVEX"); show("SAVEX(11)");
     type_str("22"); xeq("SAVEX"); show("SAVEX(22)");

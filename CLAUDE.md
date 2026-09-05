@@ -1221,41 +1221,60 @@ CX's 128 built-in XM registers) are diffed. **Result: byte-for-byte
 identical.** MultiFOCAL's module, when not invoked, has zero observable
 effect on native operation.
 
-**A real, currently-unexplained anomaly found while building Test 1,
-explicitly flagged rather than swept under the rug**: after `SEEKPTA`
-to register 1 of a freshly-populated file (`SAVEX`'d with 11, 22, 33
-via real catalog dispatch, in that order), the first real catalog
-`GETX` call returns 22, not 11 - as if `GETX` advances its pointer
-*before* reading, while `SAVEX` writes *then* advances (an asymmetry
-between the two, if this holds) - see `compat_presence_test.c`'s
-header comment for the reasoning and the discarded alternative
-theories. **This is very likely specific to raw catalog `XEQ` used
-back-to-back this way** (this compat test's own calling pattern) and
-does NOT contradict Phase 3's own `lsto_lrcl_test.c`, which reads back
-correct values via `LRCL` (a `gosub REALGETX` from custom MCODE, a
-different call path) - not re-investigated further here since it has
-zero bearing on either compatibility conclusion (see Test 1 and Test 2
-below, both explicitly designed to not depend on which theory is
-right). Worth root-causing later if `GETX`'s exact pointer semantics
-ever become load-bearing for new work.
+**A real anomaly found while building Test 1, investigated to a
+confirmed root cause immediately afterward (not left open)**: after
+`SEEKPTA` to register 1 of a freshly-populated file (`SAVEX`'d with 11,
+22, 33 via real catalog dispatch, immediately after `CRFLD`, in that
+order), the first real catalog `GETX` call returned 22, not 11 - as if
+a value had gone missing. **Root cause, confirmed via a dedicated probe
+(three separate checks, not checked in - reproducible from this
+description): a fresh `CRFLD` does NOT leave the file's pointer
+positioned to write register 1 directly.** The probe confirmed, with
+no ambiguity: (1) `SEEKPTA(n)` immediately followed by a single `SAVEX`
+or `GETX`, done individually and separately for `n` = 1 through 5 with
+a fresh reseek before every single op, gives an exact 1:1 correspondence
+- register `n` is written/read, every time, no exceptions; (2) a
+*chain* of `SAVEX`es or `GETX`es all issued after a single, explicit,
+upfront `SEEKPTA(1)` - no reseek in between - is *also* exact and
+correctly sequential (11,22,33,44,55 in, same values out in order); (3)
+but a `SAVEX` chain issued **right after a bare `CRFLD`, with no
+explicit `SEEKPTA` in between**, loses its first value - the first
+write lands outside the file's normal register range entirely (not
+merely at a shifted register - a directly-confirmed absolute
+correspondence test found no value 11 anywhere in registers 1-5
+afterward). **This is a real, general HP-41CX behavior, unrelated to
+MultiFOCAL**: `CRFLD`'s own post-creation pointer state is not
+equivalent to `SEEKPTA(1)` - always issue an explicit `SEEKPTA` right
+after `CRFLD`, never assume the pointer is ready. Both compatibility
+test files were fixed to do this (`compat_presence_test.c`,
+`compat_xm_coexist_test.c`) and now read back exactly the values
+written, no discrepancy. **This does not, and never did, affect
+Phase 3's own design**: the documented `LSTO`/`LRCL` calling convention
+already mandates an explicit `SEEKPTA` before every single access (see
+this file's own Phase 3 section) - `lsto_lrcl_test.c` never relied on
+`CRFLD`'s implicit pointer state, so it was never exposed to this
+quirk. Only this session's two new, quickly-written compat tests had
+the gap, and both are now fixed and re-verified passing.
 
 **Test 2 - XM coexistence** (`test/compat_xm_coexist_test.c`): targets
 the specific, previously-flagged shared-global-state risk directly -
 does a native program's own XM file survive a real subroutine call
 that uses `LSTO`/`LRCL` (which, unlike the pure-arithmetic `LCLS`/
 `LCLX`, do touch XM via `SAVEX`/`REALGETX` against whatever file is
-currently "current") in between? Deliberately self-referential rather
-than asserting specific numbers (to sidestep the Test 1 anomaly
-entirely): reads a native `NATIVE` file's contents via the same
-`SEEKPTA`+`GETX` sequence twice - once immediately after writing it
-(the "baseline," whatever its actual values are), once again after a
-full round of MultiFOCAL activity (`CRFLD MFSTK`, 3x `LCLS`, a seek,
-2x `LSTO`, 3x `LCLX`, which makes `MFSTK` "current" partway through)
-- and asserts the two reads match exactly. **Result: PASS** - `NATIVE`
-reads back identically (92, 93, 0 both times) after `MFSTK` was
-created, seeked into, written to, and left "current" for most of the
-intervening sequence. MultiFOCAL's own XM operations do not leak into
-or corrupt an independent native file.
+currently "current") in between? Also fixed to `SEEKPTA` right after
+its own `CRFLD` (per the root-caused finding above), and kept
+deliberately self-referential anyway rather than hardcoding an
+assertion on specific numbers - good practice regardless of whether the
+values are now well understood: reads a native `NATIVE` file's contents
+via the same `SEEKPTA`+`GETX` sequence twice - once immediately after
+writing it (the "baseline"), once again after a full round of
+MultiFOCAL activity (`CRFLD MFSTK`, 3x `LCLS`, a seek, 2x `LSTO`, 3x
+`LCLX`, which makes `MFSTK` "current" partway through) - and asserts
+the two reads match exactly. **Result: PASS** - `NATIVE` reads back
+identically (91, 92, 93 both times, now correct after the `CRFLD`/
+`SEEKPTA` fix) after `MFSTK` was created, seeked into, written to, and
+left "current" for most of the intervening sequence. MultiFOCAL's own
+XM operations do not leak into or corrupt an independent native file.
 
 Re-ran all 4 pre-existing suites (`frames_test`, `frames_bounds_test`,
 `lsto_lrcl_test`, `frames_lrst_test`) after adding these - all still
@@ -1270,8 +1289,6 @@ changed this pass).
   (native catalog dispatch + real arithmetic) covers the two concrete
   risk vectors a MCODE module actually introduces, but is not the same
   thing as a literal "native FOCAL program."
-- The `GETX` pointer-semantics anomaly above was flagged, not
-  root-caused.
 - Catalog *display* effects (whether `CAT 2` lists MultiFOCAL's
   functions differently than a bare CX) were not tested - out of scope
   for the "native programs behave identically" wording, since listing
