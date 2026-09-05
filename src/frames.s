@@ -109,6 +109,7 @@
               .fat    Lclx
               .fat    Lsto
               .fat    Lrcl
+              .fat    Lrst
               .fat    Padding
 FatEnd:       .con    0,0
 
@@ -305,6 +306,53 @@ Lsto:         gosub   SAVEX
 ;;; into X. Unlike LSTO, safe to complete via golong ERR110 - only the
 ;;; SAVEX/write path was found to corrupt file-directory state.
 Lrcl:         gosub   REALGETX
+              golong  ERR110
+
+;;; PHASE 4: recovery from an orphaned frame after abrupt exit. LCLS/
+;;; LCLX are pure X-in/X-out functions (see above) - the "current
+;;; logical stack size" they thread through X has to be held somewhere
+;;; persistent BETWEEN calls by the calling FOCAL program itself (its
+;;; own body uses X for other things between push and pop), by
+;;; convention in a dedicated FOCAL variable (recommended name: "MFSZ")
+;;; that every subroutine STOs into right after LCLS and RCLs right
+;;; before LCLX. If a subroutine that pushed a frame never reaches its
+;;; matching LCLX - a FOCAL error abort (any op error halts the running
+;;; program and returns to the keyboard), a GTO out of the subroutine,
+;;; or a manual stop - MFSZ is left stuck at the elevated size. This
+;;; doesn't corrupt anything (MFSTK's own contents are untouched - see
+;;; Lcls/Lclx above, which never touch XM at all), but it permanently
+;;; "loses" that frame's registers: every future LCLS silently builds
+;;; on top of the stale size instead of reusing the orphaned space,
+;;; eventually hitting the depth ceiling for no logical reason.
+;;;
+;;; Deliberately NOT auto-detected: this project's own history (the
+;;; RESZFL/ERR110 hang, the SAVEX+ERR110 corruption bug - both above)
+;;; is a repeated lesson that reaching into OS internals (here, that
+;;; would mean patching the error-handling/abort path) is exactly where
+;;; this project has hit its worst, hardest-to-diagnose bugs for a real
+;;; HP-41. MultiFOCAL cannot tell "empty stack" apart from "orphaned
+;;; stack" on its own, so it doesn't try - LRST is a manual recovery
+;;; tool the FOCAL programmer calls at a known-safe point (e.g. the top
+;;; of the main program, or an explicit menu/recovery routine), the
+;;; same discipline Geir Isene's own coding standard already calls for
+;;; ("every routine must return to the header... as its last step" -
+;;; see CLAUDE.md's community-convention research) applied one level up
+;;; to MultiFOCAL's own frame stack.
+              .name   "LRST"
+;;; No input read. Unconditionally writes X = 2 (the empty-stack
+;;; minimum - header only, no frames) regardless of X's prior value.
+;;; Touches no XM state at all - MFSTK's physical contents are never
+;;; reclaimed or reinitialized, only the logical counter value the
+;;; calling program threads through X (and is expected to STO into its
+;;; own MFSZ variable right after this call) resets to empty. Safe to
+;;; call any number of times, including when the stack is already
+;;; empty (idempotent).
+Lrst:         c=0     w
+              pt=     3
+              lc      2             ; C.M = 2 (plain-integer form: nibble3=2)
+              a=c     m
+              b=a     m             ; B.M = 2
+              gsbp    StoreFloatIntoX ; X = 2, normalized float form
               golong  ERR110
 
 ;;; Deliberate, permanent no-op placeholder - see the FAT table comment

@@ -1075,3 +1075,98 @@ Names are final as used.
   presence) is still untested, unchanged from the Phase 2 tag's own
   scope note.
 **Phase 3 is now tagged complete** (`phase-3`).
+
+## Phase 4: LRST, manual recovery from an orphaned frame (2026-09-05)
+
+Started Phase 4 at the user's direction, choosing between it and
+compatibility testing (both open since Phase 2/3) - Phase 4 won because
+it closes a known hole in what's already built, where compatibility
+testing only verifies nothing broke.
+
+**A real prerequisite gap surfaced first, not previously written down
+anywhere**: `LCLS`/`LCLX` are pure X-in/X-out functions - every test so
+far (`frames_test.c`, `lsto_lrcl_test.c`) feeds the returned size
+straight back into the next call, but a *real* FOCAL subroutine uses X
+for its own arithmetic between push and pop. Nothing in Phases 1-3
+actually specified where the persistent "current logical stack size"
+lives across that gap. Resolved here as **documentation, not new
+MCODE**: the calling FOCAL program is expected to hold it in a
+dedicated variable (recommended name `MFSZ`), STOing into it right
+after `LCLS` and RCLing right before `LCLX`/`LSTO`/`LRCL`'s own
+register-address math. This is exactly the value that goes stale on
+abrupt exit - Phase 4's real question is downstream of this one.
+
+**The abrupt-exit question itself**: if a subroutine calls `LCLS` then
+never reaches its matching `LCLX` - a FOCAL error abort (any op error
+halts the running program and returns to the keyboard), a `GTO` out of
+the subroutine, or a manual stop - `MFSZ` is left stuck at the elevated
+size. Nothing is corrupted (`LCLS`/`LCLX` never touch XM at all - pure
+counter arithmetic, per the Phase 2 redesign above), but the frame's
+registers are permanently "lost": every future `LCLS` silently builds
+on top of the stale size instead of reusing the orphaned space, and
+this compounds until the depth ceiling refuses pushes for no logical
+reason - silently, per the existing LCLS/LCLX refusal convention.
+
+**Design choice, made with the user's sign-off after the tradeoffs were
+laid out**: no automatic detection. This project's own history -
+the RESZFL/`ERR110` hang and the `SAVEX`+`ERR110` corruption bug, both
+documented above - is a repeated, hard-won lesson that reaching into OS
+internals (here, that would mean patching the error-handling/abort
+path) is exactly where this project has hit its worst, hardest-to-
+diagnose bugs on real hardware semantics. MultiFOCAL also has no way to
+tell "legitimately empty stack" apart from "orphaned stack" on its own.
+Instead: a new manual recovery function, **`LRST`**, that the FOCAL
+programmer calls at a known-safe recovery point (top of the main
+program, an explicit reset/menu routine) - the same discipline Geir
+Isene's own coding standard already calls for ("every routine must
+return to the header... as its last step," see the community-convention
+research above) applied one level up to MultiFOCAL's own frame stack.
+
+**Implementation** (`src/frames.s`): `LRST` takes no meaningful input -
+it unconditionally writes X = 2 (the empty-stack minimum) regardless of
+X's prior value, via the same already-verified `StoreFloatIntoX` +
+`golong ERR110` path `LCLS`/`LCLX` use. Deliberately touches no XM
+state at all - `MFSTK`'s physical contents are never reclaimed or
+reinitialized, only the logical counter a real program threads through
+`MFSZ` resets to empty. Because it never calls `SAVEX`, it cannot hit
+Phase 3's `SAVEX`+`ERR110` corruption bug - `golong ERR110` here is
+exactly as safe as it already is in `LCLS`/`LCLX`.
+
+Inserted into the `.fat` list *before* `Padding`, per the Phase 2 "last
+`.fat` entry never dispatches" finding (list is now `Header, Lcls,
+Lclx, Lsto, Lrcl, Lrst, Padding`).
+
+**Verified** via a new, dedicated test (`test/frames_lrst_test.c`,
+checked in): pushes 3 real nested frames (2->6->10->14) to simulate a
+legitimately in-progress call chain, then calls `LRST` directly with X
+still at the orphaned value 14 and confirms it returns 2 (not something
+derived from 14); confirms idempotency (`LRST` from an already-empty
+X=2 also returns 2); confirms normal `LCLS`/`LCLX` operation resumes
+correctly from the post-reset state; and confirms `LRST` ignores X even
+at the opposite extreme (X=34, the depth ceiling, still resets to 2).
+All 8 checks pass. Re-ran all three pre-existing suites
+(`frames_test.c`, `frames_bounds_test.c`, `lsto_lrcl_test.c`) against
+the rebuilt module (now with `LRST` inserted before `Padding`) - all
+still pass, no regressions.
+
+**Real, honest scope limits of Phase 4**:
+- `LRST` is purely reactive - nothing detects that a frame *was*
+  orphaned or warns the user; calling it at the wrong time (e.g. while
+  frames are still legitimately in use) silently discards them exactly
+  like an orphan would, since MultiFOCAL cannot distinguish the two
+  cases. This is a deliberate, sign-off tradeoff (see above), not an
+  oversight.
+- The `MFSZ` convention documented here is a recommendation for how a
+  real FOCAL program should use `LCLS`/`LCLX`/`LSTO`/`LRCL` together -
+  it is not itself checked, enforced, or read by any MultiFOCAL MCODE;
+  a program is free to use a different variable name or storage
+  scheme, as long as it's consistent.
+- No real, hand-written FOCAL program demonstrating this whole
+  convention end-to-end (as opposed to the C test harness's synthetic
+  keystroke sequences) has been written yet.
+- The automatic-detection alternative (an OS-level error/abort hook)
+  was considered and explicitly declined for this phase, not proven
+  infeasible - see the design-choice paragraph above.
+- Compatibility (native FOCAL programs unaffected by MultiFOCAL's
+  presence) remains untested project-wide, unchanged from every prior
+  phase's own scope note.
