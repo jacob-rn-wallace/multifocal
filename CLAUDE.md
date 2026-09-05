@@ -1428,3 +1428,37 @@ program" compatibility test would still need beyond this (arithmetic,
 `ENTER^`, and digit entry were already usable via plain `tabcode[]`
 characters) is mostly just assembling these primitives into an actual
 test - not blocked on any further keycode discovery.
+
+## Compatibility testing, Test 3: a literal stored FOCAL program (2026-09-05)
+
+Closed the gap Test 1 explicitly could not attempt (see its own scope
+notes above) now that STO/RCL/GTO/LBL are all confirmed.
+
+**The program** (`test/compat_native_program_test.c`, 9 real lines,
+entered via genuine `PRGM`-mode keystrokes - verified independently in
+a throwaway probe before being locked in): store 5, recall it, enter 3
+(a fresh digit entry automatically lifts the stack, per standard RPN
+semantics - `Y=5, X=3`), `GTO 13` past a deliberately wrong `999`
+line, land on a matching `LBL 13`, add (`5+3=8`, only reachable this
+way if the `999` line was genuinely skipped), store the result. Run
+once with MultiFOCAL's module present at page 8, once with page 8
+untouched (same pattern as Test 1), diffing full stdout - every
+intermediate recording-time display, the post-run display, and two
+independent `RCL` checks (`R01=5`, `R02=8`) confirming the registers
+actually hold the right values, not just that the display happened to
+show a plausible number. **Result: byte-for-byte identical, and
+correct** (`test/run_compat_native_program.sh`). This is the most
+literal reading yet of the "native FOCAL programs must behave
+identically" constraint - an actual stored, recorded, GTO-branching
+FOCAL program, not calculator-mode keystrokes standing in for one.
+
+Re-ran all 9 pre-existing suites - all still pass, no regressions
+(expected, nothing in `src/frames.s` changed this pass).
+
+**Compatibility testing is now substantively complete** across all
+three angles identified: presence-only invariance (Test 1), XM
+coexistence (Test 2), and a literal stored program (Test 3). The only
+remaining, explicitly out-of-scope items are catalog/`CAT`-listing
+display differences (not an execution-behavior question) and the
+CV+82180A real-hardware question, which is a separate, still-untouched
+undertaking.
