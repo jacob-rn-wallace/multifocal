@@ -1170,3 +1170,113 @@ still pass, no regressions.
 - Compatibility (native FOCAL programs unaffected by MultiFOCAL's
   presence) remains untested project-wide, unchanged from every prior
   phase's own scope note.
+
+## Compatibility testing (2026-09-05)
+
+Started at the user's direction, choosing this over further Phase 5+
+feature work since it's the one hard constraint (`CLAUDE.md`'s own
+"native FOCAL programs must behave identically whether or not
+MultiFOCAL is present") that's been flagged as untested since the
+Phase 2 tag and never actually acted on.
+
+**A real tooling constraint found first**: neither soynut's
+`hp41_key_bridge.c` (the shared wire-protocol parser this project's
+whole test harness is built on) nor its `named_keys[]`/`tabcode[]`
+tables, nor `sim/sim_keyboard.c`'s SDL key map, expose a way to press
+STO/RCL/GTO/LBL as their own distinct physical keys - only ASCII
+letters/digits/operators (via `tabcode[]`) and a small named-key set
+(`ON`, `USER`, `PRGM`, `ALPHA`, `SHIFT`, `SST`, `BST`, `RS`, `XEQ`,
+`CLX`, `XY`, `RDN`). Confirmed by reading soynut's own vendored
+`emu41gcc/emu41.c` (`traite_touche()`, the DOS reference emulator this
+table was transcribed from unchanged) - the original DOS emulator
+itself never mapped STO/RCL/GTO to any PC key either. Since `~/soynut`
+is read-only for this project (see this file's own "Relationship to
+`~/soynut`" section), a real hand-written stored FOCAL program
+exercising STO/RCL/GTO by name was out of scope for this pass - not
+attempted, not something this session invented a workaround for.
+
+**What was tested instead, and why it's still a real, meaningful
+check**: the actual compatibility-sensitive risk a MCODE module
+introduces is (1) whether its mere presence in a FAT page changes
+catalog dispatch or any other native operation's outcome, and (2)
+whether its own XM usage corrupts a native program's independent XM
+file via the shared global "current file" state Phase 2 groundwork
+flagged from day one. Both are testable with operations the harness
+already reliably drives (ALPHA-name entry, digit entry, real RPN
+arithmetic via `tabcode[]`'s `+`/`-`/`*`//` operators, and real catalog
+`XEQ` of native CX functions like `CRFLD`/`SAVEX`/`GETX`/`RESZFL`),
+without needing STO/RCL/GTO specifically.
+
+**Test 1 - presence-only invariance** (`test/compat_presence_test.c`,
+`test/run_compat_presence.sh`): runs an identical sequence of native
+operations (create+use its own `NATIVE` XM file via `CRFLD`/`SAVEX`/
+`GETX`/`RESZFL`, plus real RPN arithmetic `5 ENTER 3 + 2 - 4 * 3 /`)
+twice - once with MultiFOCAL's module loaded at page 8 (every other
+test's own boot pattern), once with page 8 left untouched entirely
+(confirmed by inspection: `nut_boot_cx()` never touches page 8 itself -
+every existing test sets `tabpage[8]`/`typmod[8]` explicitly after
+calling it, so "module absent" is simply not doing that). The two
+runs' full stdout (every intermediate display plus a checksum of the
+CX's 128 built-in XM registers) are diffed. **Result: byte-for-byte
+identical.** MultiFOCAL's module, when not invoked, has zero observable
+effect on native operation.
+
+**A real, currently-unexplained anomaly found while building Test 1,
+explicitly flagged rather than swept under the rug**: after `SEEKPTA`
+to register 1 of a freshly-populated file (`SAVEX`'d with 11, 22, 33
+via real catalog dispatch, in that order), the first real catalog
+`GETX` call returns 22, not 11 - as if `GETX` advances its pointer
+*before* reading, while `SAVEX` writes *then* advances (an asymmetry
+between the two, if this holds) - see `compat_presence_test.c`'s
+header comment for the reasoning and the discarded alternative
+theories. **This is very likely specific to raw catalog `XEQ` used
+back-to-back this way** (this compat test's own calling pattern) and
+does NOT contradict Phase 3's own `lsto_lrcl_test.c`, which reads back
+correct values via `LRCL` (a `gosub REALGETX` from custom MCODE, a
+different call path) - not re-investigated further here since it has
+zero bearing on either compatibility conclusion (see Test 1 and Test 2
+below, both explicitly designed to not depend on which theory is
+right). Worth root-causing later if `GETX`'s exact pointer semantics
+ever become load-bearing for new work.
+
+**Test 2 - XM coexistence** (`test/compat_xm_coexist_test.c`): targets
+the specific, previously-flagged shared-global-state risk directly -
+does a native program's own XM file survive a real subroutine call
+that uses `LSTO`/`LRCL` (which, unlike the pure-arithmetic `LCLS`/
+`LCLX`, do touch XM via `SAVEX`/`REALGETX` against whatever file is
+currently "current") in between? Deliberately self-referential rather
+than asserting specific numbers (to sidestep the Test 1 anomaly
+entirely): reads a native `NATIVE` file's contents via the same
+`SEEKPTA`+`GETX` sequence twice - once immediately after writing it
+(the "baseline," whatever its actual values are), once again after a
+full round of MultiFOCAL activity (`CRFLD MFSTK`, 3x `LCLS`, a seek,
+2x `LSTO`, 3x `LCLX`, which makes `MFSTK` "current" partway through)
+- and asserts the two reads match exactly. **Result: PASS** - `NATIVE`
+reads back identically (92, 93, 0 both times) after `MFSTK` was
+created, seeked into, written to, and left "current" for most of the
+intervening sequence. MultiFOCAL's own XM operations do not leak into
+or corrupt an independent native file.
+
+Re-ran all 4 pre-existing suites (`frames_test`, `frames_bounds_test`,
+`lsto_lrcl_test`, `frames_lrst_test`) after adding these - all still
+pass, no regressions (expected, since nothing in `src/frames.s` itself
+changed this pass).
+
+**Real, honest scope limits of this compatibility-testing pass**:
+- No real, hand-written stored FOCAL program (entered via `PRGM` mode,
+  `LBL`/`GTO`/`STO`/`RCL` keystrokes) was run - blocked by the shared
+  test harness's own keyboard-mapping gap (see above), which this
+  project does not own and does not modify. What was tested instead
+  (native catalog dispatch + real arithmetic) covers the two concrete
+  risk vectors a MCODE module actually introduces, but is not the same
+  thing as a literal "native FOCAL program."
+- The `GETX` pointer-semantics anomaly above was flagged, not
+  root-caused.
+- Catalog *display* effects (whether `CAT 2` lists MultiFOCAL's
+  functions differently than a bare CX) were not tested - out of scope
+  for the "native programs behave identically" wording, since listing
+  differences don't change program *execution* results.
+- This pass tests the CX boot configuration only, same as every phase
+  before it - the CV+82180A real-hardware question from this file's
+  "Real-hardware testing target" section remains completely separate
+  and still unverified.
