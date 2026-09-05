@@ -904,3 +904,166 @@ approach, which Phase 3+ may need to revisit if variable frame widths
 are ever required; and `LSTO`/`LRCL` (actual local-variable read/write
 within a pushed frame) don't exist yet - by original design, that's
 Phase 3's job, not a Phase 2 gap.
+
+## Phase 3: LSTO/LRCL - local-variable read/write, milestone reached
+(2026-09-04)
+
+Started Phase 3 (`LSTO`/`LRCL`: actual local-variable read/write within
+a pushed frame) at the user's direction. Before writing any MCODE, did
+the research this phase needed: how do you reach an ARBITRARY register
+within the current frame, given Phase 2 already established that
+`SEEKPTA` (needed to position the XM file's pointer at a specific
+register) cannot be safely `gosub`'d from custom MCODE at all? This
+took a long, genuinely necessary empirical detour, documented here in
+full because every dead end is itself a real, load-bearing finding for
+future work in this area - not padding.
+
+**Fixed a real, long-standing gap in this project's own tooling
+first**: `tools/cx_disasm.c` had been silently using soynut's plain
+`rom_nut0/1/2` (the C/CV base OS) for pages 0-2 ever since Phase 2's
+own "SAVERX/GETRX... was built on disassembling the wrong ROM"
+retraction - that retraction was written but the tool itself was never
+actually fixed. Now uses `rom_xnut0/1/2` (real `XNUT0-2.ROM`), matching
+`test/nut_rom_cx.c`'s own boot config exactly (`tools/Makefile` gained
+an `xnut` target alongside `cxfuns`). Any of this project's own prior
+disassembly that crossed into pages 0-2 before this fix (none of
+Phase 2's *load-bearing* conclusions did - CXFUNS's own pages 3-4 were
+always correct) should be treated as unverified until re-checked
+against the corrected tool.
+
+**Finding 1 - `SEKPT` (the non-ALPHA sibling of `SEEKPTA`, 0x3f2c in
+`mainframe_cx.h`, vs `SEEKPTA`'s 0x3f35) ALSO abandons its caller when
+`gosub`'d directly**, exactly like `SEEKPTA`/`RCLPTA`/`CRFLD` do -
+confirmed via the same sentinel-write probe technique Phase 2 used
+(`gosub SEKPT` then a value-write that only executes if control
+actually returns; it never did, for two separate targets in the same
+session). This retracts the natural-seeming hope that "ALPHA-touching"
+was the precise dividing line between safe and unsafe `gosub` targets -
+`SEKPT` touches no ALPHA at all (no filename argument) and still
+abandons. The real dividing line, as best understood now: purely
+numeric single-register ops (`GETX`/`SAVEX`, confirmed again this
+phase) return normally; anything that repositions the file pointer -
+ALPHA-based or not - does not.
+
+**Finding 2 - `GETRX`/`SAVERX` (0x3e36/0x3e2f) are NOT a safe
+index-based random-access primitive either.** Disassembly (using the
+now-fixed tool) showed they share one code body with `GETR`/`SAVER`
+(0x3e62/0x3e69, the already-known bulk whole-file copy operations),
+selected by the same kind of mode-flag pattern seen elsewhere in this
+ROM - `GETRX`/`SAVERX` are just the "count comes from the X register at
+runtime" entry variant of the SAME bulk copy, not a different
+operation. Confirmed empirically too: `XEQ SAVERX` with a plausible
+single argument produced no XM data-register change anywhere in the
+full 1024-register `espaceRAM` range (only OS-internal scratch/catalog-
+search registers changed) - the exact same "succeeds with no visible
+effect" trap Phase 2 already hit once with plain `SAVER`/`GETR` on a
+file with nothing sized yet.
+
+**Finding 3 - a second, independent, and more general form of the
+Phase 2 "`SEEKPTA` to a file's own last register fails" bug.** Phase 2
+had only confirmed this for the degenerate case of a 1-register file
+(where register 1 is also the *only* register) and worked around it by
+using size 2 for `MFSTK`. Directly tested this phase, via pure
+keystrokes with no MCODE involved at all: `SEEKPTA` to register 10 of a
+real 10-register file fails with "END OF FL" too - and so does
+`SEEKPTA` to register 34 of a real 34-register `MFSTK`. **This
+generalizes: `SEEKPTA` to a file's own last register always fails,
+regardless of file size** - not a degenerate-size-1 quirk. Consequence:
+`MFSTK` must be created at size **35**, not 34 - one permanent, never-
+touched padding register past the depth ceiling's own last real slot
+(register 34), verified directly to restore normal seeking to register
+34 once the file is one register larger than its logically-used range.
+This is a real HP-41CX OS limitation, not something this project's
+MCODE can work around any other way (no seeking happens from MCODE at
+all, so there's no code path here to fix).
+
+**Finding 4 - the real, working design**: since `SEEKPTA` cannot be
+called from MCODE at all (Finding 1 covers the only real alternative
+and rules it out too), the CALLING FOCAL PROGRAM must do the seek
+itself, as an ordinary top-level program step (`"MFSTK"` `<register>`
+`XEQ SEEKPTA`), immediately before `XEQ LSTO`/`XEQ LRCL` - exactly the
+same pattern already established for `CRFLD` (a real FOCAL/keystroke
+step, never `gosub`'d). `LSTO`/`LRCL` themselves are then thin wrappers
+around the confirmed-safe single-register primitives: `LRCL` is
+`gosub REALGETX; golong ERR110` (`REALGETX` = a locally-declared
+`.equlab 0x380B`, disassembly-confirmed to share SAVEX's body and end
+in a real `RTN` - `mainframe.h` already declares its OWN, unrelated
+`GETX` at 0x1CEF, a coincidental name collision caught by the
+assembler's "duplicate symbol" error, not silently wrong). Verified
+end to end: pushing all 8 frames to the depth ceiling, storing 4
+distinct values into the shallowest frame's registers (3-6) via one
+`SEEKPTA` plus 4 sequential auto-advancing `LSTO`s, storing into the
+*deepest* frame's registers (31-34 - including the previously-
+unreachable register 34) in deliberately scrambled order (a fresh
+`SEEKPTA` before each), then reading all 8 values back via `LRCL`
+(sequential for the shallow frame, scrambled again for the deep one) -
+every value round-tripped correctly (`test/lsto_lrcl_test.c`, checked
+in).
+
+**Finding 5 - a real, confirmed bug drives `LSTO`'s one asymmetry with
+every other function in this module**: `gosub SAVEX` followed by
+`golong ERR110` corrupts the OS's file-directory lookup - the CALLING
+FOCAL PROGRAM'S very next real `SEEKPTA` fails with a spurious "FL NOT
+FOUND" (the file appears to not exist at all), even though `SAVEX`
+itself completes correctly and returns normally every time. Isolated
+via a battery of minimal probes, each varying exactly one thing:
+  - Real catalog-dispatched `XEQ SAVEX` (no `gosub` at all): no
+    corruption, confirmed via a subsequent real `SEEKPTA` + `GETX`
+    round-trip.
+  - `gosub REALGETX` (the read path) followed by `golong ERR110`: no
+    corruption either - the bug is specific to the WRITE path.
+  - `gosub SAVEX` followed by a bare `rtn` (no `ERR110` at all): **no
+    corruption** - confirmed correct at every register including the
+    file's actual last one, verified independently via real `GETX`
+    reads afterward. This isolates the bug to the specific combination
+    of `gosub SAVEX` immediately followed by `golong ERR110`, not to
+    `SAVEX` or `gosub` individually.
+  - Two attempted fixes that did NOT work, for the record: clearing ST
+    bit 7 (the mode flag `SAVEX`'s own entry sets and never explicitly
+    clears before its `RTN`) right after `gosub SAVEX`, and `gosub
+    ERRSUB` (the real X-Function "opening housekeeping" call
+    `HelloWorld.s` always does, tried once before for the unrelated
+    Phase 2 RESZFL hang without success there either) before `gosub
+    SAVEX` - both instead broke the *current* call outright (`NONEXISTENT`
+    immediately), rather than fixing the *later* corruption.
+  - Stashing register N (used internally by `SAVEX`'s shared body) in
+    B across the `gosub SAVEX` call and restoring it before `golong
+    ERR110` - also did not help.
+  - The true root cause inside `ERR110`'s own file-name-aware display
+    code (the same code area Phase 2's unresolved RESZFL/`ERR110` hang
+    pointed at) was not pinned down at the individual-instruction
+    level - this is the same "root-cause not found, but a clean,
+    verified workaround exists" outcome as that earlier bug.
+
+**Consequence, now implemented in `src/frames.s`**: `LSTO` ends with a
+bare `rtn`, not `golong ERR110` - it does NOT refresh the display (X is
+left showing whatever it already displayed), the same "no visible
+feedback" tradeoff already accepted for LCLS/LCLX's silent-refusal
+path. `LRCL` is unaffected and uses `golong ERR110` as normal.
+
+**A real Calypsi FAT-table consequence, already known but reconfirmed
+here**: `Lsto`/`Lrcl` had to be inserted *before* `Padding` in the
+`.fat` list, per the Phase 2 "last `.fat` entry never dispatches"
+finding - `Padding` must always stay last.
+
+**Real, honest scope limits of what Phase 3 has NOT solved**:
+- `LSTO`/`LRCL` do not embed a slot number themselves (unlike real
+  `STO 00`-`STO 15`) - the calling FOCAL program computes the absolute
+  register (`frame_base = current_size - 3`, slot 0-3 = `frame_base`
+  through `frame_base + 3`) and does its own `SEEKPTA` before every
+  access that isn't the immediate next register in file order. This is
+  a real, inherent HP-41 XM constraint (`SEEKPTA` is architecturally a
+  FOCAL-program-level operation - Finding 1 above rules out any
+  MCODE-internal alternative), not a gap specific to this design - but
+  it does mean the ergonomics fall short of the original vision of a
+  clean, hidden-plumbing `LSTO`/`LRCL` interface. Worth revisiting
+  later (e.g. slot-literal FAT entries `LSTO0`-`LSTO3`/`LRCL0`-`LRCL3`,
+  matching the real Geir Isene-cited "PPC ROM packs many functions into
+  short names" precedent) but explicitly deferred, not solved now.
+- The exact root cause of Finding 5's `SAVEX`+`ERR110` corruption
+  inside the OS's own code was not found - only a verified workaround.
+- Compatibility (native FOCAL programs unaffected by MultiFOCAL's
+  presence) is still untested, unchanged from the Phase 2 tag's own
+  scope note.
+- Not yet tagged - this is a milestone within Phase 3, not a
+  Phase-3-complete claim.

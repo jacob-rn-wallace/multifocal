@@ -12,9 +12,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-extern const uint16_t rom_nut0[4096];
-extern const uint16_t rom_nut1[4096];
-extern const uint16_t rom_nut2[4096];
+extern const uint16_t rom_xnut0[4096];
+extern const uint16_t rom_xnut1[4096];
+extern const uint16_t rom_xnut2[4096];
 extern const uint16_t rom_cxfuns0[4096];
 extern const uint16_t rom_cxfuns1[4096];
 
@@ -38,9 +38,9 @@ static int fetch_word(int addr) {
     int page = (addr >> 12) & 0xF;
     int off = addr & 0xFFF;
     switch (page) {
-        case 0: return rom_nut0[off];
-        case 1: return rom_nut1[off];
-        case 2: return rom_nut2[off];
+        case 0: return rom_xnut0[off];
+        case 1: return rom_xnut1[off];
+        case 2: return rom_xnut2[off];
         case 3: return rom_cxfuns0[off];
         case 4: return rom_cxfuns1[off];
         default: return 0;

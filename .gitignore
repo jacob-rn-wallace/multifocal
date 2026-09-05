@@ -4,3 +4,4 @@
 build/
 toolchain/calypsi-nut-*/
 tools/cxfuns_rom.c
+tools/xnut_rom.c
