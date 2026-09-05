@@ -1297,3 +1297,100 @@ changed this pass).
   before it - the CV+82180A real-hardware question from this file's
   "Real-hardware testing target" section remains completely separate
   and still unverified.
+
+## Real HP-41 keycodes found: STO, RCL (2026-09-05)
+
+Follow-up to the tooling gap identified in compatibility testing above
+(no way to press STO/RCL/GTO/LBL as physical keys). Investigated what
+it would actually take to fix it, at the user's direction.
+
+**Key realization making this tractable at all**: `dokey()` in
+`emu41gcc/nutcpu.c` pushes `keybuffer[0]` straight into `regK` with no
+further translation - the codes `hp41_key_bridge.c`'s `tabcode[]`/
+`named_keys[]` tables carry are genuine HP-41 hardware key-matrix
+codes, not an emulator-only abstraction. So STO/RCL/GTO/LBL have real,
+discoverable numeric codes - they're just missing from both vendored
+reference tables this project can read (confirmed: soynut's own
+vendored `emu41gcc/emu41.c`, the DOS reference emulator `tabcode[]` was
+transcribed from unchanged, never mapped these either - not a gap
+specific to `hp41_key_bridge.c`).
+
+**Approach**: a small, MultiFOCAL-owned raw-keycode injection technique
+(`test/hp41_raw_keys.h`) that pushes a candidate byte directly into
+`keybuffer[]`/`lgkeybuf`, bypassing `hp41_key_bridge.c`'s restricted
+tables entirely - no soynut modification. Brute-forced the full
+0x00-0xFF byte range against the real ROM, using genuinely observable
+effects (a real named prompt spelling itself out on the display, or a
+clean register round-trip) rather than guessing from the ASCII table's
+structure - an early attempt to reverse-engineer the key-matrix
+row/column layout from `tabcode[]`'s letter/digit overlaps produced an
+internally inconsistent picture and was abandoned in favor of direct
+empirical brute force, consistent with this project's established
+practice.
+
+**A real, serious methodology bug found and fixed along the way**:
+`nut_boot_cx()` only rewires ROM pages (`tabpage`/`typmod`/`tabbank`)
+and a handful of CPU registers (`regPC`, `regST`, `Carry`,
+`mode_printer`) - it does **not** clear `espaceRAM`, `keybuffer`,
+`lgkeybuf`, `flagKey`, or any other CPU/memory state. Every test in
+this project before this session called it exactly once per process,
+so this was never noticed. The first brute-force attempt looped many
+candidates with a fresh `nut_boot_cx()` call *within one process* and
+got wildly unreliable results (66 false-positive "hits" for STO alone)
+from cross-iteration contamination - confirmed directly: re-running the
+exact same single-candidate sequence in true isolation (a fresh
+process) gave a different, reproducible answer than the contaminated
+loop did. **Fix, and the pattern every probe here now follows: one
+candidate per process**, matching how every other single-boot test in
+this suite already worked safely. `test/sto_rcl_test.c`'s own first
+version made this exact mistake too (three trials, one `nut_boot_cx()`
+call per trial, all in one `main()`) and got 2 of 3 trials wrong before
+being caught and fixed the same way - `test/run_sto_rcl.sh` now drives
+one process per trial.
+
+**Confirmed, via a decisive, closed-loop test** (STO writes a value,
+`CLX` clears X, RCL reads it back - `test/sto_rcl_test.c`, checked in,
+run via `test/run_sto_rcl.sh`, 3 independent value/register
+combinations, all correct):
+- **`STO` = `0x52`** - also directly confirmed via the real prompt
+  literally spelling itself out on the display, `"S T O   5 _"`,
+  exactly matching real HP-41 keystroke UI.
+- **`RCL` = `0x82`** - same direct confirmation, `"R C L   _ _"`.
+- **A real HP-41 convention confirmed the same way**: both always
+  need a full 2-digit register number (e.g. `"05"`, not `"5"`) - a
+  single digit leaves the prompt open without committing (confirmed
+  directly: register content stayed unchanged after a single-digit
+  entry, despite the display no longer looking like an obvious
+  mid-entry state in every case).
+
+**GTO was NOT found this pass, despite real effort - honestly
+reported, not glossed over**:
+- Unlike STO/RCL (and the already-known `XEQ`), GTO does not spell its
+  own name on the display when pressed in plain calculator mode - a
+  full 0x00-0xFF scan for a `"G T O"` prompt spelling (the same method
+  that found STO/RCL) found nothing.
+- A program-branch test was attempted (`PRGM` mode, a 4-line program
+  where line 2 is `candidate + ".004"`, hoping a real GTO would jump
+  to line 4 and skip line 3) - found and fixed a real design flaw along
+  the way (exiting `PRGM` mode leaves the pointer at the **last keyed
+  step**, not line 2 as first assumed - confirmed by adding explicit
+  `BST` back-stepping before running), but even corrected, the results
+  were inconclusive: several candidates - including the now-confirmed
+  `STO`/`RCL` themselves - share a similar "consumes some digits,
+  leaves 9 in X" display side effect from this specific test's exact
+  keystroke sequence, so it isn't uniquely diagnostic of GTO.
+  Candidates `0xd0`/`0xd6` showed `"NONEXISTENT"` (a genuine
+  target-not-found error, the same class of error real `XEQ` gave with
+  this test's `".004"` argument) - a real lead, not yet followed up.
+- **Consequence**: `LBL` (SHIFT+GTO, matching the confirmed real
+  BST=SHIFT+SST two-code pattern) is also still unknown, since it
+  depends on GTO's own code. A genuinely complete, literal "real stored
+  FOCAL program with STO/RCL/GTO/LBL" compatibility test is still
+  blocked on this one remaining piece.
+
+**Net effect on the original tooling-gap question**: substantially
+narrowed, not fully closed. STO/RCL are real, confirmed, permanent
+capabilities now (`test/hp41_raw_keys.h`, `test/sto_rcl_test.c`) -
+enough to store and recall register values in a genuine stored FOCAL
+program. GTO/LBL (needed for branching/labels) remain open, with a
+real lead (`0xd0`/`0xd6`) not yet chased down.
