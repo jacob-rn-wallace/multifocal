@@ -1986,3 +1986,105 @@ ran `SUMN` in the actual running `sim/` instance via the same raw PTY
 byte-injection technique used for `MFINIT` - confirmed clean execution
 (no crash, correct auto-power-off afterward) with `SUMN(4)` producing
 `X=10`.
+
+**Retraction, immediately following**: that "delivered to the live
+session" claim was wrong, and the mistake matters enough to spell out
+in full - see the next section.
+
+## Retraction and real fix: the live-session injections never worked at
+all, and why - a genuine wire-protocol bug in soynut, now fixed there
+too (2026-09-06)
+
+The user reported `NONEXISTENT` trying to run `SUMN` live, and directly
+identified that my own understanding of the key protocol was wrong.
+They were completely right, and the root cause explains every
+"successful" live injection this session as pure luck, not a working
+mechanism.
+
+**The real bug**: raw byte injection into the C test harness's
+`keybuffer[]` (what `test/*.c`'s own `inject_raw()` does, writing
+directly into the emulator's key buffer, bypassing everything) and
+sending raw bytes over the sim's *actual virtual serial port* (what
+every PTY-based injection this session did, via plain `os.write()`)
+are **not the same mechanism** - despite both existing in this
+codebase under a same-looking `inject_raw`-shaped name. Every byte
+arriving over the real wire goes through soynut's
+`hp41_key_bridge_feed_byte()`, which - confirmed by directly reading
+that function - treats **every incoming byte as an ASCII character**,
+looks it up in a fixed 128-entry `tabcode[]` table, and accepts a small
+fixed set of `"[NAME]"` bracket-escaped strings for anything else. It
+has no path at all for "here is an already-resolved HP-41 keycode,
+just push it."
+
+So sending the raw byte `0x52` (STO's real keycode) over the wire was
+never received as STO - it was received as the ASCII character `'R'`
+(0x52 = 82 = `'R'`), which `tabcode['R']` maps to `0x34` - the *same*
+keycode as the digit `7` (ALPHA-mode letters share physical keys with
+the numeric keypad on a real HP-41). That's exactly the `[7]` the user
+saw. The same misinterpretation hit every other raw code sent this
+way, including `SHIFT` itself (`0x12`, meant to prefix `LBL`/`RTN`/
+`X=0?`) - `tabcode[0x12]` (ASCII DC2) maps to `0x87`, real `R/S`'s
+keycode, not `SHIFT` at all. And anything `>= 0x80` (`RCL`, `GTO`, the
+`PRGM`/`CLX` toggles sent as raw `0xc5`/`0xc3`) was **silently dropped
+outright** - `hp41_key_bridge_feed_byte()`'s own `if (c < 0 || c > 127)
+return;` guard. This means the `PRGM` on/off toggles in *every* earlier
+live "recording" this session (`MFINIT`, `SUMN`) never even reached the
+emulator - none of it was ever actually recorded as a program at all.
+Checking only "did it crash" and "do the checksums look active" (this
+session's own methodology up to this point) could not have caught
+this, and didn't.
+
+**Confirmed, not just reasoned about**: `python3 -c` reproducing the
+exact `tabcode['R'] == 0x34` lookup matched the user's own report
+exactly before any fix was attempted.
+
+**The real fix, at the user's explicit direction ("if you want to
+touch soynut's files that's fine... just document, commit, and push
+those changes for soynut too")**: extended `firmware/hp41_key_bridge.c`'s
+`named_keys[]` table itself, in soynut, adding `STO`/`RCL`/`GTO`/`LBL`/
+`RTN`/`X=0?`/`X=Y?`/`X<=Y?`/`X>Y?` as real `"[NAME]"` entries (the same
+mechanism `BST` already uses for its own two-code chord) - not a
+MultiFOCAL-local workaround, a genuine fix to a real, general gap in
+soynut's own wire protocol, since these keys have no ASCII equivalent
+on *any* project using this key bridge, MultiFOCAL or otherwise. Also
+added SDL key bindings for all nine in `sim/sim_keyboard.c`
+(`F10`/`F11`/`F12`/`,`/`;`/`'`/`[`/`]`/`\`) so the interactive window
+itself can use them directly, and 7 new checks to soynut's own
+`tests/key_bridge_test.c` (28 total, all passing, zero regressions
+across soynut's full 12-program suite). Committed and pushed to
+soynut's own repo (`4039de8`), following its own conventions (`CLAUDE.md`
+updated, its own test suite extended) exactly as this project's own
+work would be.
+
+**MultiFOCAL's own addition, in `sim/mf_sim_main.c`**: the render
+debug log now prints the *actual display text* (via the same
+`display_to_buf()` every `test/*.c` already uses), not just a
+checksum - a checksum alone is exactly what let the wire-protocol
+mistake go undetected through several "successful-looking" injections
+this session. `sim/mf_extra_keys.py` (the broken companion keypad
+built on the same wrong raw-byte assumption, before the real bug was
+found) was deleted - no longer needed now that the SDL window itself
+has real key bindings.
+
+**Properly re-verified, this time with real display text at every
+single step, not just activity**: killed the old (garbage-state) live
+session, rebuilt `sim/` against the fixed `hp41_key_bridge.o`, and
+redid the entire setup via the *correct* `"[NAME]"` wire protocol -
+confirmed via the log's new display-text output that `LBL "MFINIT"`,
+`SEEKPTA`, and `RTN` each recorded exactly as intended; confirmed a
+real `SAVEX(77)`/`GETX` round-trip showing `77.0000` on the actual
+display; confirmed `SUMN`'s `X=0?`/`GTO 13`/`LBL 13`/`RTN` lines all
+recorded correctly; and confirmed `SUMN(4)` genuinely produces
+`10.0000` and `MFSZ` genuinely unwinds back to `2.0000` - all read
+directly from the real display text, not inferred from checksums or
+absence of a crash. This is the actual, first genuine confirmation
+that MultiFOCAL's calling convention works through the real
+interactive simulator - everything claimed to be "delivered live"
+earlier this session should be considered unverified until this
+point.
+
+**Standing lesson, worth being explicit about**: "no crash and
+plausible-looking activity" is not verification. Every future claim
+about the live interactive session must be backed by real display
+text (now cheap to get, via the new debug line), the same standard
+`test/*.c` has always held itself to for the C harness.

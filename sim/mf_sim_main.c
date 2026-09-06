@@ -34,6 +34,7 @@
 #include <SDL.h>
 
 #include "st7920.h"
+#include "display.h"
 #include "nut_rom.h"
 #include "hp41_display_bridge.h"
 #include "hp41_elite_display_bridge.h"
@@ -316,8 +317,18 @@ static void sim_render_if_needed(sim_state_t *state, bool redraw_needed)
     for (int i = 0; i < LCD_FB_SIZE; i++) {
         checksum ^= state->framebuf[i];
     }
-    sim_dbg("soynut sim: rendering display state #%d (PC=0x%04X, instr=%d, checksum=0x%02X)\n",
-            state->render_count, regPC, cptinstr, checksum);
+    /* MultiFOCAL's own addition (soynut's sim_main.c only logs the
+     * checksum): the real display TEXT, via the same display_to_buf()
+     * every test program uses - a checksum alone isn't enough to tell
+     * whether a keystroke actually did what was intended, which is
+     * exactly what let an earlier wire-protocol misunderstanding slip
+     * through undetected (see CLAUDE.md's "wire protocol correction"
+     * session) - this makes that class of mistake visible immediately
+     * in the log instead of requiring separate, easy-to-skip
+     * verification. */
+    char dispbuf[32];
+    sim_dbg("soynut sim: rendering display state #%d (PC=0x%04X, instr=%d, checksum=0x%02X) disp=\"%s\"\n",
+            state->render_count, regPC, cptinstr, checksum, display_to_buf(dispbuf));
 
     st7920_draw_frame(state->framebuf);
     fdsp = 0;

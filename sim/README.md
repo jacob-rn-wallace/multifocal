@@ -26,12 +26,14 @@ make -C sim run       # build and run the interactive simulator
 
 ## Controls
 
-Same mapping as soynut's own `sim/` (`sim_keyboard.c`, reused
-unmodified) - see that project's `sim/README.md` for the full table.
-In short: digits/operators/ENTER/backspace map directly; letters are
-ALPHA-mode keys; `F9`=XEQ, `` ` ``=ALPHA, `F2`=PRGM, `F3`=SHIFT,
-`F1`=ON, `TAB`=USER, `F4`=SST, `F5`=BST, `F6`=X&lt;&gt;Y, `F7`=R&darr;,
-`F8`/`SPACE`=R/S.
+Same mapping as soynut's own `sim/` (`sim_keyboard.c`), plus keys
+MultiFOCAL's own research added there (see soynut's `CLAUDE.md`'s "Key
+bridge" section) - see that project's `sim/README.md` for the full
+base table. In short: digits/operators/ENTER/backspace map directly;
+letters are ALPHA-mode keys; `F9`=XEQ, `` ` ``=ALPHA, `F2`=PRGM,
+`F3`=SHIFT, `F1`=ON, `TAB`=USER, `F4`=SST, `F5`=BST, `F6`=X&lt;&gt;Y,
+`F7`=R&darr;, `F8`/`SPACE`=R/S - and now also `F10`=STO, `F11`=RCL,
+`F12`=GTO, `,`=LBL, `;`=RTN, `'`=X=0?, `[`=X=Y?, `]`=X&lt;=Y?, `\`=X&gt;Y?.
 
 ## Using MultiFOCAL
 
@@ -50,26 +52,28 @@ memory" below):
 A real FOCAL program can collapse this whole sequence into a single
 `XEQ ALPHA "MFINIT" ALPHA` - see `test/mfinit_test.c` and `CLAUDE.md`'s
 "MFINIT" section for the actual subroutine and why it can't be built
-into MultiFOCAL's own MCODE. **Not usable from this window as-is,
-though**: recording `MFINIT` needs `LBL`/`RTN`, and those aren't in
-`sim_keyboard.c`'s key mapping either (see the limitation below) - it
-would need to be pre-loaded via raw PTY byte injection (the same
-technique `test/mfinit_test.c` itself uses) rather than typed in here.
+into MultiFOCAL's own MCODE. Now fully keyable through this window:
+`F2` (PRGM) to start recording, `,` (LBL) then `` ` ``/type `MFINIT`/
+`` ` `` for the label, the setup steps above for the body, `;` (RTN) to
+close it, `F2` again to stop recording.
 
 From there, the real functions are all reachable the same way - type a
 value, `F9` (XEQ), `` ` `` (ALPHA), type the name, `` ` `` (ALPHA):
 `LCLS`, `LCLX`, `LRST` (MultiFOCAL's own), and `SEEKPTA`/`SAVEX`/`GETX`
 (the real 82180A primitives local-variable access is built on - see
 `CLAUDE.md`'s "LSTO/LRCL retired" section for the calling convention).
+A full self-recursive program like `test/sumn_recursive_test.c`'s
+`SUMN` (using `LBL`, `GTO`, `RTN`, and `X=0?` throughout) is now keyable
+through this window too, not just the C test harness.
 
-**Known limitation, inherited from soynut's own `sim_keyboard.c`**:
-`STO`/`RCL`/`GTO`/`LBL`/`RTN` have no key mapping in the SDL window (the
-same tooling gap `CLAUDE.md`'s compatibility-testing session found and
-worked around with raw keycode injection - see `test/hp41_raw_keys.h`).
-That means this simulator is great for interactively exercising
-MultiFOCAL's functions live, but can't currently be used to key in a
-full multi-line stored FOCAL program (like `test/demo_local_scoping_test.c`'s
-own `MFDEMO`/`INNER`) through the window itself.
+**Resolved, previously a known limitation**: `STO`/`RCL`/`GTO`/`LBL`/
+`RTN`/the numeric test instructions used to have no key mapping in the
+SDL window at all - fixed upstream, in soynut's own
+`firmware/hp41_key_bridge.c` and `sim/sim_keyboard.c` (see
+`CLAUDE.md`'s "Retraction and real fix" section for the full story,
+including a real wire-protocol bug this surfaced and fixed along the
+way). `tools/hp41_keyboard_gui.py`'s photo-keyboard overlay doesn't
+have buttons for these yet - a real, open follow-up.
 
 ## Continuous memory
 
