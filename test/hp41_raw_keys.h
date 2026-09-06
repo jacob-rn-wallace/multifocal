@@ -57,6 +57,28 @@
  *   the real "0 1  R T N" recorded-line display. 0x83 unshifted is
  *   itself just an RCL-row alias ("RCL IND __"), consistent with the
  *   already-known STO-row alias pattern (0x22/0x52/0x72 all -> STO/LBL).
+ *
+ *   HP41_KEY_X_EQ_0 = 0x07, SHIFT'd (0x12 then 0x07) - the numeric
+ *   test/skip instruction "X=0?". Found via a DIFFERENT scan than the
+ *   others above: the original RTN-discovery scan filtered for "2+
+ *   consecutive uppercase letters" in the recorded-line display, which
+ *   is exactly wrong for a test instruction (displays mostly as
+ *   symbols/digits, e.g. "X=0?" - at most one letter in a row) - so it
+ *   was invisible to that filter even though the scan technically
+ *   covered its byte value. A second scan filtering for "?" in the
+ *   display instead found it immediately, alongside its siblings
+ *   X=Y? (0x04/0x14 SHIFT), X<=Y? (0x05/0x15 SHIFT), X>Y? (0x06/0x16
+ *   SHIFT) - a real lesson: a brute-force scan's *filter* can hide a
+ *   real result even when the scan itself covers the right byte range.
+ *   Skip-on-false semantics (the standard RPN-calculator convention -
+ *   if the test is TRUE, execute the next program line; if FALSE, skip
+ *   it) confirmed decisively, not assumed: a program "<val>, X=0?, STO
+ *   05" against a register pre-seeded with a sentinel (99) leaves the
+ *   sentinel intact for a nonzero <val> (skipped) and overwrites it for
+ *   val=0 (not skipped) - see the "SUMN" recursive-showcase session in
+ *   CLAUDE.md. Naming note: real HP-41 manuals print this using a
+ *   literal "=" (ASCII, already in tabcode[]), not a special glyph -
+ *   typed exactly like any other ALPHA-mode function name.
  */
 #ifndef MULTIFOCAL_HP41_RAW_KEYS_H
 #define MULTIFOCAL_HP41_RAW_KEYS_H
@@ -65,11 +87,23 @@
 #define HP41_KEY_RCL 0x82
 #define HP41_KEY_GTO 0xd6
 #define HP41_KEY_RTN 0x83
+#define HP41_KEY_X_EQ_0 0x07
 /* LBL: inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_STO). RTN:
- * inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_RTN). Neither gets
- * its own single-code #define beyond the base key, since both are
- * genuinely 2-keycode SHIFT sequences, not a distinct code of their
- * own. */
+ * inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_RTN). X=0?:
+ * inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_X_EQ_0). None of
+ * these get their own single-code #define beyond the base key, since
+ * all three are genuinely 2-keycode SHIFT sequences, not a distinct
+ * code of their own.
+ *
+ * GTO's own real, confirmed limitation, directly relevant to any
+ * program using it: raw keycode injection commits GTO IMMEDIATELY to
+ * a fixed default target ("GTO 13") - typing digits afterward starts a
+ * NEW program line rather than editing GTO's own target (see the
+ * original GTO/LBL keycode-discovery session in CLAUDE.md). A program
+ * built this way can only ever use ONE distinct GTO/LBL pair (always
+ * targeting local label 13) - not a real HP-41 hardware limitation,
+ * just a limitation of this specific injection technique, but a real
+ * constraint on anything built with it. */
 
 /*
  * No shared injection function is provided here - this project's own

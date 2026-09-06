@@ -1894,3 +1894,95 @@ interactive simulator by hand still can't record `MFINIT` themselves
 through the window - it would need to be pre-loaded via the same raw
 PTY byte-injection technique the test harness uses, or via extending
 `sim_keyboard.c`'s own mapping (still not done).
+
+## SUMN: a genuinely self-recursive showcase, and a new keycode found
+along the way (2026-09-06)
+
+At the user's request, for "a program to write that shows off
+MultiFOCAL's capabilities" - the honest answer was that MFDEMO/INNER
+(the earlier demo) only proves two *different* subroutines' frames
+don't collide. The harder, more compelling case - N *simultaneously-
+active frames of the SAME subroutine*, genuinely calling itself - is
+exactly what native flat-register FOCAL cannot do cleanly (every
+recursion level would share the same numbered registers), and is
+MultiFOCAL's actual value proposition.
+
+**New keycode found**: `X=0?` (the numeric test/skip instruction) is
+`SHIFT + 0x07`. Found via a real methodology lesson: the original RTN-
+discovery scan filtered recorded-line displays for "2+ consecutive
+uppercase letters," which is exactly wrong for a test instruction
+(displays as mostly symbols/digits, e.g. `"X=0?"` - the scan covered
+the right byte, the *filter* just couldn't see it). A second pass
+filtering for `"?"` in the display instead found it immediately,
+alongside its siblings `X=Y?` (0x04/0x14 SHIFT), `X<=Y?` (0x05/0x15
+SHIFT), `X>Y?` (0x06/0x16 SHIFT). Skip-on-false semantics (standard
+RPN convention: if the test is TRUE, run the next line; if FALSE, skip
+it) confirmed decisively via a register-write test (a sentinel value
+in a register survives when skipped, gets overwritten when not) - not
+assumed. Recorded in `test/hp41_raw_keys.h` as `HP41_KEY_X_EQ_0`.
+
+**A real, confirmed limitation of raw-keycode-injected `GTO`**: it
+always commits immediately to a fixed default target (`GTO 13`) -
+typing digits afterward starts a new program line rather than editing
+the target (already known from the original GTO/LBL session, now
+directly load-bearing here). Consequence: any program built this way
+can only ever use ONE distinct `GTO`/`LBL` pair. `SUMN`'s whole
+structure (R02 pre-seeded to the base-case value *before* the branch,
+one `GTO 13` as the sole jump, the recursive-case code placed so
+falling through - no jump at all - is the "n != 0" path) was
+deliberately designed around this constraint.
+
+**The program** (`test/sumn_recursive_test.c`, CX; `test/
+cv82180a_sumn_recursive_test.c`, the real target architecture):
+
+```
+LBL "SUMN"
+  STO 00                      ; stash n
+  0  STO 02                   ; R02 = 0 (base-case default)
+  RCL 01  XEQ "LCLS"  STO 01  ; push THIS level's own frame
+  "MFSTK" RCL 01 3 -  XEQ "SEEKPTA"
+  RCL 00  XEQ "SAVEX"         ; store n in THIS frame's own slot
+  RCL 00
+  X=0?
+  GTO 13                      ; n=0: jump straight to the join point
+  RCL 00 1 -
+  XEQ "SUMN"                  ; recurse - pushes/uses/pops its OWN
+                               ; frame while this level's stays alive
+  STO 02
+LBL 13
+  "MFSTK" RCL 01 3 - XEQ "SEEKPTA"
+  XEQ "GETX"                  ; recall THIS level's own n - the whole
+                               ; point: must survive the recursive
+                               ; call's entire frame lifecycle
+  RCL 02  +
+  STO 03
+  RCL 01  XEQ "LCLX"  STO 01  ; pop THIS level's own frame
+  RCL 03
+  RTN
+```
+
+**A real bug found and fixed along the way - in the test script, not
+MultiFOCAL**: the first run produced the mathematically CORRECT answer
+(`SUMN(4)=10`) but left `MFSZ` at an impossible value (`4` - not in
+`LCLX`'s own output residue class `{2,6,10,...}` at all). Root cause:
+the test forgot to initialize `MFSZ` (R01) to `2` before the first
+call - a register's cold-boot default is `0`, and `frame_base = MFSZ -
+3` silently computes *different but still mutually distinct* (so
+still non-colliding, which is why the sum was still right) registers
+when starting from the wrong baseline. Fixed by adding `2 STO 01` to
+the one-time setup, exactly the `MFSZ` convention Phase 4 already
+documented.
+
+**Verified, both configurations**: `SUMN(4)=10` via 5 simultaneously-
+active local frames at the deepest point of recursion (`MFSZ` reaches
+22, well within the depth-8/34-register ceiling), `MFSZ` fully unwinds
+back to `2`, and a second independent call (`SUMN(3)=6`) immediately
+afterward still works correctly - proof no state leaks between runs.
+Full regression suite (all CX and CV+82180A tests, both compat
+scripts) re-run afterward, zero regressions.
+
+**Delivered to the user's live interactive session too**: recorded and
+ran `SUMN` in the actual running `sim/` instance via the same raw PTY
+byte-injection technique used for `MFINIT` - confirmed clean execution
+(no crash, correct auto-power-off afterward) with `SUMN(4)` producing
+`X=10`.
