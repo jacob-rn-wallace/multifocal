@@ -92,6 +92,35 @@
 ;;; nibble12=value with exponent nibbles all 0; "10"/"14"/"30" all
 ;;; show nibble12=tens digit, nibble11=ones digit, nibble0=1.
 
+;;; REAL, CONFIRMED FINDING (found while building a real, hand-authored
+;;; demonstration FOCAL program - see CLAUDE.md's "local-scoping demo"
+;;; session): `golong ERR110` is UNSAFE as LCLS/LCLX/LRST's completion
+;;; path when the calling context is a RUNNING FOCAL PROGRAM (as opposed
+;;; to live/interactive keystrokes) - it corrupts something that breaks
+;;; the OS's OWN catalog-dispatched XM calls (SEEKPTA/SAVEX/GETX/CRFLD)
+;;; for the REST of that program's execution, even though it correctly
+;;; resumes the calling program's own next line and even leaves X
+;;; holding the right value. Isolated via bisection with a minimal,
+;;; throwaway Lcls body (`golong ERR110` alone, no gsbp, no arithmetic
+;;; at all): still corrupts a subsequent SEEKPTA+SAVEX+GETX sequence
+;;; when called from within a running program, but NOT when called
+;;; live/interactively (every prior test's own methodology, which is
+;;; exactly why this went unnoticed through Phases 2-4 and the earlier
+;;; compatibility-testing pass - none of them ever called a MultiFOCAL
+;;; function as a STEP inside an executing stored program). Replacing
+;;; `golong ERR110` with a bare `rtn` (the same fix already used for the
+;;; retired LSTO, there for a related-but-distinct corruption - see the
+;;; "PHASE 3, then RETIRED" comment below) makes the corruption go away
+;;; completely, confirmed via the same bisection probe. Cost: no more
+;;; automatic display refresh after XEQ LCLS/LCLX/LRST (a real, but
+;;; purely cosmetic, regression - the returned X value itself is
+;;; unaffected either way) - exactly the tradeoff LSTO already accepted.
+;;; `setdec` before each `rtn` restores normal decimal mode for the
+;;; caller as a matter of hygiene (bisection showed this alone did NOT
+;;; fix the corruption - `golong ERR110` itself was the actual cause,
+;;; not decimal-vs-hex mode - but there is no reason to hand back
+;;; control in hex mode either).
+;;;
 ;;; REAL, CONFIRMED CALYPSI/FAT FINDING: the LAST .fat entry in a module
 ;;; never dispatches via XEQ ALPHA <name> ALPHA - it never even enters
 ;;; its own page (confirmed via modtool --summary showing its address
@@ -198,9 +227,10 @@ Lcls:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               a=c     m
               b=a     m             ; B.M = new size
               gsbp    StoreFloatIntoX ; X = new size, normalized float form
-              golong  ERR110        ; clean top-level completion - refreshes the display with X, goes idle (a bare "rtn" here left the display blank, confirmed empirically - see CLAUDE.md)
-LclsFull:     sethex                ; same reasoning as above - restore hex mode before golong regardless of path taken
-              golong  ERR110        ; X is left unchanged - the push was refused (already at the depth ceiling)
+              setdec                ; restore normal decimal mode for the caller before returning (see the file header's "golong ERR110 corrupts a running program's later XM dispatch" note)
+              rtn                   ; NOT golong ERR110 - see file header. Caller gets the correct X but no forced display refresh (a real, accepted tradeoff, same one already made for the retired LSTO)
+LclsFull:     setdec                ; same reasoning as above
+              rtn                   ; X is left unchanged - the push was refused (already at the depth ceiling)
 
               .name   "LCLX"
 ;;; X in: current logical stack size. X out: new size (current - 4), or
@@ -226,9 +256,10 @@ Lclx:         gsbp    LoadPlainFromX ; C.M = current size, plain-integer form
               a=c     m
               b=a     m             ; B.M = new size
               gsbp    StoreFloatIntoX ; X = new size, normalized float form
-              golong  ERR110        ; clean top-level completion, same reasoning as LCLS above
-LclxEmpty:    sethex                ; same reasoning as LclsFull above
-              golong  ERR110        ; X is left unchanged - the pop was refused (already empty)
+              setdec                ; see LCLS's own comment on this - same reasoning
+              rtn                   ; NOT golong ERR110 - see LCLS's own comment on this
+LclxEmpty:    setdec                ; same reasoning as above
+              rtn                   ; X is left unchanged - the pop was refused (already empty)
 
 ;;; PHASE 3, then RETIRED (2026-09-05): local-variable read/write
 ;;; within the CURRENT (innermost) frame. Originally implemented as
@@ -348,7 +379,8 @@ Lrst:         c=0     w
               a=c     m
               b=a     m             ; B.M = 2
               gsbp    StoreFloatIntoX ; X = 2, normalized float form
-              golong  ERR110
+              setdec                ; see LCLS's own comment on this - same reasoning
+              rtn                   ; NOT golong ERR110 - see LCLS's own comment on this
 
 ;;; Deliberate, permanent no-op placeholder - see the FAT table comment
 ;;; above. Never remove without also removing the reason it's here:

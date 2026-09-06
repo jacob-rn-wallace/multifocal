@@ -84,11 +84,22 @@ standing in for it. Actual physical hardware remains untested: the
 user owns the real HP-41CV but has no way to load software onto it yet
 (no EPROM burner or flash-based module emulator).
 
+**A real, hand-authored demonstration program now exists** — a genuine
+stored FOCAL program (two global labels, one calling the other as a
+real subroutine) exercising `LCLS`/`LCLX`/`SAVEX`/`GETX` together,
+proving two independently-active local frames don't collide. Building
+it surfaced and fixed a real bug in the already-tagged Phase 2 MCODE:
+`LCLS`/`LCLX`/`LRST` returned control via a mechanism (`golong ERR110`)
+that silently corrupted later XM operations whenever called as a step
+*inside a running FOCAL program* — invisible until now because every
+prior test drove them via live keystrokes only. Fixed by returning via
+a plain `rtn` instead; the whole existing test suite, including the
+real CV+82180A configuration, was re-verified afterward with zero
+regressions.
+
 See `CLAUDE.md` for the full session-by-session history, the reasoning
-behind each decision, and what's still open (variable-width frames, a
-real hand-written demonstration program — everything so far has been
-driven by synthetic test-harness keystrokes, not an actual authored
-FOCAL program — and slot-literal ergonomics for local-variable access).
+behind each decision, and what's still open (variable-width frames and
+slot-literal ergonomics for local-variable access).
 
 ## Building and testing
 

@@ -47,6 +47,16 @@
  *   combination was tried first and produced a plain digit instead.
  *   Confirmed via the real "L B L  _ _" prompt display, 3-way (0x22/
  *   0x52/0x72 - electrical key-matrix aliases - all agree).
+ *
+ *   HP41_KEY_RTN = 0x83, SHIFT'd (0x12 then 0x83) - found by a full
+ *   0x00-0xFF brute-force PRGM-mode name-spelling scan (one process per
+ *   candidate, both plain and SHIFT'd - see the demo/local-scoping
+ *   session in CLAUDE.md), after a first guess of SHIFT+R/S (0x12 then
+ *   the already-known R/S code 0x87) turned out to be VIEW, not RTN -
+ *   a real, corrected assumption, not a lucky first try. Confirmed via
+ *   the real "0 1  R T N" recorded-line display. 0x83 unshifted is
+ *   itself just an RCL-row alias ("RCL IND __"), consistent with the
+ *   already-known STO-row alias pattern (0x22/0x52/0x72 all -> STO/LBL).
  */
 #ifndef MULTIFOCAL_HP41_RAW_KEYS_H
 #define MULTIFOCAL_HP41_RAW_KEYS_H
@@ -54,9 +64,12 @@
 #define HP41_KEY_STO 0x52
 #define HP41_KEY_RCL 0x82
 #define HP41_KEY_GTO 0xd6
-/* LBL: inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_STO) - no
- * single-code #define, since it's genuinely a 2-keycode sequence, not
- * a distinct code of its own. */
+#define HP41_KEY_RTN 0x83
+/* LBL: inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_STO). RTN:
+ * inject_raw(0x12) [SHIFT] then inject_raw(HP41_KEY_RTN). Neither gets
+ * its own single-code #define beyond the base key, since both are
+ * genuinely 2-keycode SHIFT sequences, not a distinct code of their
+ * own. */
 
 /*
  * No shared injection function is provided here - this project's own

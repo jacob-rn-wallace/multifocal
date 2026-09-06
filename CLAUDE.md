@@ -1669,3 +1669,110 @@ shares `LCLS`/`LCLX`'s exact code pattern, no `SAVEX`/`GETX`/any
 mainframe-fixed address at all) with an actual test result, not just
 code inspection. Every one of `LCLS`/`LCLX`/`LRST`/local-slot access
 now has dedicated CV+82180A test coverage.
+
+## A real, hand-authored demonstration FOCAL program - and a real bug
+it found in already-tagged MCODE (2026-09-06)
+
+Closed the "real hand-written demonstration program" gap this file has
+flagged since the compatibility-testing pass: `test/demo_local_scoping_test.c`
+is a genuine, hand-authored, stored FOCAL program (two real global
+labels, `LBL "MFDEMO"` and `LBL "INNER"`, entered via real `PRGM`-mode
+keystrokes, `LBL "MFDEMO"` calling `XEQ "INNER"` as a real subroutine
+call) that demonstrates MultiFOCAL's actual value proposition end to
+end: `MFDEMO` pushes its own frame and stores 111 into it, calls
+`INNER` (which independently pushes its OWN frame, stores 222, and
+pops it again), then `MFDEMO` reads its own local back and confirms it
+is still 111 - undisturbed by `INNER`'s entirely separate frame
+activity. This is the first MultiFOCAL demo that is a real, runnable
+FOCAL program a user could type in and `XEQ`, not a C-harness keystroke
+sequence standing in for one.
+
+**New keycode found along the way: `RTN` = SHIFT + `0x83`.** A first
+guess (SHIFT + the already-known R/S code, by analogy with LBL=SHIFT+
+STO) turned out to be `VIEW`, not `RTN` - confirmed wrong, then found
+properly via the same brute-force method used for GTO/LBL: a full
+`0x00`-`0xFF` PRGM-mode name-spelling scan, **one process per
+candidate** (both plain and SHIFT'd - contamination from candidates
+that open multi-digit prompts, like `STO IND __`, ruled out doing this
+scan within a single process/session). `0x83` unshifted is itself just
+an RCL-row alias (`"RCL IND __"`), same pattern as the already-known
+STO-row aliases. Recorded permanently in `test/hp41_raw_keys.h`.
+
+**Building this program surfaced a real, previously-undiscovered
+correctness bug in the already-tagged `phase-2` MCODE, found and
+fixed this session**: the first version of the demo program ran to
+completion with all bookkeeping correct (`MFSZ` unwound to 2 exactly
+as expected), but the actual XM reads/writes (`SAVEX`(111) at
+`MFDEMO`'s own frame register, `SAVEX`(222) at `INNER`'s) silently
+read back as 0 - not an error, just wrong, the exact same "ran fine,
+values wrong" signature this project has hit several times before.
+
+**Root-caused via careful bisection, the same discipline used
+throughout this project**: isolated first to "a real nested subroutine
+call between two `SEEKPTA`+`SAVEX` sequences at different registers"
+(confirmed fine on its own, via a throwaway two-subroutine probe with
+no `LCLS`/`LCLX` involved at all) - then to "adding even one `LCLS`
+call anywhere in the running program" (confirmed broken, regardless of
+whether the `LCLS` call came before or interleaved with the XM
+operations). Progressively stripping `Lcls`'s body down to nothing but
+`golong ERR110` (no `gsbp`, no arithmetic, no `setdec`/`sethex` at
+all) still reproduced the corruption; replacing that bare `golong
+ERR110` with a plain `rtn` made it disappear completely. **Confirmed,
+general finding: `golong ERR110` is unsafe as a custom FAT function's
+"successful completion" path when the calling context is a RUNNING
+FOCAL PROGRAM (as opposed to live/interactive keystrokes)** - it
+corrupts something that breaks the OS's own catalog-dispatched XM
+calls (`SEEKPTA`/`SAVEX`/`GETX`/`CRFLD`) for the rest of that program's
+execution, even though it correctly resumes the calling program's own
+next line and even leaves X holding the right value. This went
+undetected through every prior phase and the entire compatibility-
+testing pass because none of them ever called a MultiFOCAL function as
+a step *inside an executing stored program* - every prior test drove
+`LCLS`/`LCLX`/`LRST` via live keystrokes only, where the OS's own idle
+loop sits between every key and evidently resets whatever `golong
+ERR110` leaves broken.
+
+This is a different (though related-in-spirit) corruption from Phase
+3's own Finding 5 (`gosub SAVEX` then `golong ERR110` corrupting the
+file directory lookup, live keystrokes included) - that one was
+specific to interrupting a *native XM routine's* own completion
+sequence via `gosub`; this one reproduces with a completely inert
+`Lcls` body that never touches XM or calls any native routine at all,
+and only manifests in program-context execution, not live. Two
+distinct bugs, same underlying lesson, same fix shape.
+
+**Fix, in `src/frames.s`**: `LCLS`, `LCLX`, and `LRST` all now end in
+`setdec` (restoring normal decimal mode for the caller as a matter of
+hygiene - bisection showed this alone did NOT fix the corruption,
+`golong ERR110` itself was the actual cause) followed by a bare `rtn`,
+never `golong ERR110` - exactly the fix already established for the
+retired `LSTO`. Cost: no more automatic display refresh immediately
+after `XEQ LCLS`/`LCLX`/`LRST` (the returned X value itself is
+unaffected either way) - a real but purely cosmetic regression,
+already an accepted tradeoff elsewhere in this codebase.
+
+**Verified with zero regressions across the entire existing test
+suite**, relinked and rerun against the fixed module: `frames_test`,
+`frames_bounds_test`, `local_slot_access_test`, `frames_lrst_test`,
+`gto_lbl_test`, `compat_presence_test` (+script), `compat_xm_coexist_test`,
+`compat_native_program_test` (+script), and all three CV+82180A suites
+(`cv82180a_frames_test`, `cv82180a_local_slot_test`,
+`cv82180a_lrst_test`) - all still PASS. (Surprisingly, the live display
+still shows the correct refreshed value in every one of these live-
+keystroke-driven tests even without the explicit `golong ERR110`
+refresh - the idle loop's own periodic repaint appears to catch up
+within the pump budget these tests already use; Phase 2's original
+"bare rtn left the display blank" finding was real at the time but
+evidently didn't generalize the way its own writeup assumed.) Then
+`demo_local_scoping_test.c` itself: full PASS, all three independent
+verification points (`RCL 02`=111, `RCL 01`=2, a fresh `GETX` at
+register 3=111) correct.
+
+**Real, honest scope note**: this bug was only found because this
+session finally exercised "a MultiFOCAL function called from within a
+running FOCAL program" for the first time - every phase before this
+one tested exclusively via live keystrokes. Given how many real bugs
+this exact gap just surfaced, any *future* MultiFOCAL function should
+be verified the same way (as a program step, not just live) before
+being considered done, not just live-keystroke-tested as every
+function up to now was.
