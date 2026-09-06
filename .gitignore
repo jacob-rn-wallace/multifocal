@@ -6,3 +6,4 @@ toolchain/calypsi-nut-*/
 tools/cxfuns_rom.c
 tools/xnut_rom.c
 sim/soynut_sim_persist.bin
+.DS_Store

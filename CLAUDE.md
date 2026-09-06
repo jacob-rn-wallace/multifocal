@@ -1836,3 +1836,61 @@ would close this, not yet done.
 See `sim/README.md` for the actual usage instructions (one-time
 `CRFLD`/`SEEKPTA` setup, then how to invoke each function from the
 keyboard).
+
+## MFINIT: automating the one-time setup (2026-09-06)
+
+At the user's direction, after walking through what the four-keystroke-
+group `CRFLD`/`SEEKPTA` setup actually does: is there a way to automate
+it? The honest answer had a hard wall in it, and this closes the part
+that isn't walled off.
+
+**What's permanently blocked, and why**: MultiFOCAL's own MCODE can
+never call `CRFLD`/`SEEKPTA` itself, at any point - Phase 3 already
+proved both abandon their caller (jump to idle instead of returning)
+when called via `gosub`, and an earlier attempt at automatic file
+management *inside* `LCLS` is exactly what caused the Phase 2 RESZFL/
+`ERR110` hang. So "bake setup into `LCLS` so it happens automatically
+on first use" is a door already closed for real, previously-learned
+reasons - not reconsidered here.
+
+**What isn't blocked**: an ordinary stored FOCAL subroutine, since
+real FOCAL-level `XEQ` dispatch (as opposed to an MCODE `gosub`) never
+had the abandonment problem to begin with - that restriction is
+specific to calling these functions from inside MultiFOCAL's own
+machine code. `test/mfinit_test.c` (CX) and
+`test/cv82180a_mfinit_test.c` (the real target architecture) both
+record and verify:
+
+```
+LBL "MFINIT"
+  "MFSTK" 35 XEQ "CRFLD"
+  "MFSTK" 1  XEQ "SEEKPTA"
+RTN
+```
+
+Both pass, first try, on both hardware configurations - unsurprising
+in hindsight (MFINIT is pure FOCAL, no MCODE of its own, so there's no
+reason CX vs CV+82180A would matter), but confirmed with an actual test
+result rather than assumed, same discipline as everything else here.
+Verification goes beyond "it ran without error": both tests do a real
+`LCLS` -> `SAVEX` -> `GETX` -> `LCLX` round trip immediately after
+`XEQ "MFINIT"` and confirm every value is correct - proof the file
+`MFINIT` creates is immediately, fully usable, not just present.
+
+**Net effect**: the one-time setup collapses from four separate
+keystroke groups (~15 keystrokes) to a single `XEQ ALPHA "MFINIT"
+ALPHA`, for any real FOCAL programmer typing this into an actual
+calculator or a stored program.
+
+**Real, honest scope limit, not yet closed**: making `MFINIT` safe to
+call on *every* run (silently skipping `CRFLD` if `MFSTK` already
+exists, so a user never has to remember whether they've already done
+this) would need real research into HP-41 error-trapping - can a FOCAL
+program catch and inspect a `DUP FL` error and continue past it
+cleanly? Not investigated. Also unrelated but worth noting: `sim/`'s
+own SDL window still can't key `LBL`/`RTN` at all (the same
+`sim_keyboard.c` mapping gap noted above), so a user driving the
+interactive simulator by hand still can't record `MFINIT` themselves
+through the window - it would need to be pre-loaded via the same raw
+PTY byte-injection technique the test harness uses, or via extending
+`sim_keyboard.c`'s own mapping (still not done).

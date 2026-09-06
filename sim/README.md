@@ -47,6 +47,15 @@ memory" below):
    `SEEKPTA`, `` ` `` (the mandatory post-`CRFLD` seek - see
    `CLAUDE.md`'s compatibility-testing section for why this is needed)
 
+A real FOCAL program can collapse this whole sequence into a single
+`XEQ ALPHA "MFINIT" ALPHA` - see `test/mfinit_test.c` and `CLAUDE.md`'s
+"MFINIT" section for the actual subroutine and why it can't be built
+into MultiFOCAL's own MCODE. **Not usable from this window as-is,
+though**: recording `MFINIT` needs `LBL`/`RTN`, and those aren't in
+`sim_keyboard.c`'s key mapping either (see the limitation below) - it
+would need to be pre-loaded via raw PTY byte injection (the same
+technique `test/mfinit_test.c` itself uses) rather than typed in here.
+
 From there, the real functions are all reachable the same way - type a
 value, `F9` (XEQ), `` ` `` (ALPHA), type the name, `` ` `` (ALPHA):
 `LCLS`, `LCLX`, `LRST` (MultiFOCAL's own), and `SEEKPTA`/`SAVEX`/`GETX`
