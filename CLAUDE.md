@@ -1776,3 +1776,63 @@ this exact gap just surfaced, any *future* MultiFOCAL function should
 be verified the same way (as a program step, not just live) before
 being considered done, not just live-keystroke-tested as every
 function up to now was.
+
+## Interactive simulator: `sim/`, real CV+82180A config (2026-09-06)
+
+At the user's direction: a real, hands-on counterpart to `test/`'s
+automated keystroke injection. soynut's own `sim/` is a host-native
+SDL2 simulator (real Nut CPU core, real ROM images, a rendered LCD
+window, actual keyboard input) - but its own entry point
+(`sim/sim_main.c`) only ever boots the plain base OS, with no
+MultiFOCAL module wired into any page.
+
+**Built `sim/mf_sim_main.c`**: a copy of soynut's `sim_main.c` (never
+modified in place, per this project's standing "nothing under
+`~/soynut` is built or modified" convention), with exactly one
+addition - right after the same `nut_boot()` every soynut sim run does,
+it wires in the real, user-sourced HP 82180A module (page 5, Port 2)
+and MultiFOCAL's own `frames.mod` (page 6, Port 3), the identical
+CV+82180A configuration `test/cv82180a_*_test.c` already verified
+correct. Confirmed safe: `nut_boot()` only ever touches pages 0-2, so
+this wiring survives a CLRMEM-triggered reboot with no extra handling.
+Every other line of logic in the file is soynut's own, unchanged.
+
+**New `sim/Makefile`**, modeled directly on soynut's own `sim/Makefile`
+and this repo's own `test/Makefile`: reuses soynut's `sim_*.c`/
+`firmware/*.c`/`emu41gcc/*.c`/`roms/*.c` sources directly by path
+(never copied), builds only `mf_sim_main.c` and this repo's own
+`test/nut_rom_82180a.c` wiring helper natively, links in
+`build/e82180a_rom.c` and `build/frames_rom.c`.
+
+**Verified working, two ways**:
+1. A 2-second run: boots cleanly, reaches `MEMORY LOST`, idles, and
+   auto-powers-off exactly like every other correct boot in this
+   project - no crash, no hang (the page-4 instability this project
+   already ruled out for any module stays correctly avoided).
+2. A real functional smoke test over the virtual serial port (the same
+   PTY soynut's own `tools/hp41_keyboard_gui.py` would connect to):
+   drove `CRFLD`/`SEEKPTA`/`LCLS` via real wire-protocol bytes and
+   confirmed the display kept advancing through many distinct,
+   changing states (not frozen at one instruction) - the identical
+   dispatch path `cv82180a_frames_test.c` already proves correct,
+   here exercised through the interactive plumbing instead of the
+   in-process test harness.
+
+**Real, honest limitation, inherited from soynut's own
+`sim_keyboard.c`**: `STO`/`RCL`/`GTO`/`LBL`/`RTN` have no key mapping
+in the SDL window - the same tooling gap this project's own
+compatibility-testing session found and worked around via raw keycode
+injection (`test/hp41_raw_keys.h`), which only ever mattered for a C
+test harness feeding raw bytes directly, not for a real keyboard/SDL
+window. Consequence: this simulator is fully usable for live,
+interactive experimentation with `LCLS`/`LCLX`/`LRST`/`SEEKPTA`/
+`SAVEX`/`GETX` (everything invoked via `XEQ ALPHA <name> ALPHA`, which
+*is* mapped), but not yet for keying in a full multi-line stored FOCAL
+program (like `demo_local_scoping_test.c`'s own `MFDEMO`/`INNER`)
+through the window itself - extending `sim_keyboard.c`'s own mapping
+(a MultiFOCAL-local addition, same convention as everything else here)
+would close this, not yet done.
+
+See `sim/README.md` for the actual usage instructions (one-time
+`CRFLD`/`SEEKPTA` setup, then how to invoke each function from the
+keyboard).

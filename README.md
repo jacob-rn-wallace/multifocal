@@ -124,6 +124,22 @@ as individual programs, each built by hand rather than through one
 aggregate target — see `CLAUDE.md` for the exact build command for any
 specific test.
 
+## Try it interactively
+
+`test/` proves correctness via automated keystroke injection; `sim/`
+is the real, hands-on counterpart — a host-native SDL2 window running
+the same real Nut CPU core and real ROMs, with the real 82180A module
+and MultiFOCAL's own module both wired in, driven by an actual
+keyboard instead of a C program:
+
+```
+make mod cv82180a-roms   # if not already built (see above)
+make -C sim run
+```
+
+See `sim/README.md` for controls and exactly how to invoke `LCLS`,
+`LCLX`, `LRST`, and local-variable access from the keyboard.
+
 ## What's not included
 
 - **No HP-41 ROM firmware.** The genuine OS ROM and any real module
